@@ -3,6 +3,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -20,6 +21,8 @@ const CATS_SHORT = {
   summarization: 'Summary', architecture: 'Architecture',
   long_context: 'Long ctx', repeated_context: 'Cache',
 }
+
+const MODEL_COLORS = ['#2563eb', '#d97706', '#059669', '#db2777', '#7c3aed', '#0891b2']
 
 function Tip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null
@@ -79,6 +82,7 @@ export default function CommandCenter() {
     quality: q.quality,
     model: q.final_model,
   }))
+  const modelNames = [...new Set(qualityCost.map((d) => d.model))].sort()
 
   return (
     <div className="fade-in">
@@ -126,7 +130,15 @@ export default function CommandCenter() {
                   <YAxis type="number" dataKey="quality" domain={[0, 1]} axisLine={false} tickLine={false} />
                   <ZAxis range={[46, 46]} />
                   <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<QcTip />} />
-                  <Scatter data={qualityCost} fill="#0a0c10" />
+                  <Legend />
+                  {modelNames.map((model, index) => (
+                    <Scatter
+                      key={model}
+                      name={model}
+                      data={qualityCost.filter((d) => d.model === model)}
+                      fill={MODEL_COLORS[index % MODEL_COLORS.length]}
+                    />
+                  ))}
                 </ScatterChart>
               </ResponsiveContainer>
               <div className="muted" style={{ marginTop: 6 }}>
