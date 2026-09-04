@@ -1,0 +1,180 @@
+import { useState } from 'react'
+import { Badge, Card, CardHead, Err } from '../components/ui'
+import { Flow, FlowLink } from '../components/flow'
+import { api, usd } from '../services/api'
+
+const DEMOS = [
+  { label: 'Simple → cheap', prompt: 'What is an API?' },
+  { label: 'Coding → capable', prompt: 'Debug this Python concurrency issue: threads increment a shared counter without a lock and the final count is too low. Explain the cause and fix.' },
+  { label: 'Hard → strong', prompt: 'Design a fault-tolerant distributed banking ledger in four sentences: name the consistency model, replication strategy, failure handling, and one tradeoff.' },
+]
+
+const STAGES = [
+  'Analyzing request',
+  'Filtering candidate models',
+  'Selecting cheapest capable model',
+  'Generating answer',
+  'Verifying quality',
+]
+
+export default function Playground() {
+  const [prompt, setPrompt] = useState(DEMOS[0].prompt)
+  const [context, setContext] = useState('')
+  const [force, setForce] = useState('')
+  const [res, setRes] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [stage, setStage] = useState(-1)
+  const [err, setErr] = useState('')
+
+  const send = async () => {
+    setLoading(true); setErr(''); setRes(null)
+    setStage(0)
+    const timer = setInterval(() => {
+      setStage((s) => (s < STAGES.length - 1 ? s + 1 : s))
+    }, 900)
+    try {
+      const body = { prompt, max_tokens: 512 }
+      if (context.trim()) body.context = context
+      if (force) body.force_model = force
+      const r = await api.chat(body)
+      clearInterval(timer)
+      setStage(STAGES.length)
+      setRes(r)
+    } catch (e) {
+      clearInterval(timer)
+      setErr(String(e))
+      setStage(-1)
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div className="grid side fade-in">
+      <div>
+        <Card>
+          <CardHead title="Test request" sub="Send a prompt through the full optimizer pipeline." />
+          <div className="row" style={{ marginBottom: 12 }}>
+            {DEMOS.map((d) => (
+              <button key={d.label} className="btn ghost sm" onClick={() => setPrompt(d.prompt)}>{d.label}</button>
+            ))}
+          </div>
+          <div className="field">
+            <label htmlFor="prompt">Prompt</label>
+            <textarea id="prompt" className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="ctx">Reusable context <span className="muted" style={{ fontWeight: 400 }}>(optional — same context + new question = cache hit)</span></label>
+            <textarea id="ctx" className="textarea" style={{ minHeight: 60 }} value={context} onChange={(e) => setContext(e.target.value)} />
+          </div>
+          <div className="row">
+            <input
+              className="input"
+              style={{ maxWidth: 260 }}
+              placeholder="force first model (demo)"
+              value={force}
+              onChange={(e) => setForce(e.target.value)}
+            />
+            <button className="btn primary" onClick={send} disabled={loading}>
+              {loading ? 'Optimizing…' : 'Optimize request'}
+            </button>
+          </div>
+          <Err>{err}</Err>
+        </Card>
+
+        {loading && stage >= 0 && (
+          <Card style={{ marginTop: 18 }}>
+            <div className="stages">
+              {STAGES.map((s, i) => (
+                <div key={s} className={`stage${stage > i ? ' done' : stage === i ? ' active' : ''}`}>
+                  <span className="s-dot">{stage > i ? '✓' : ''}</span>
+                  {s}{stage === i ? '…' : ''}
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {res && (
+          <Card style={{ marginTop: 18 }} className="fade-in">
+            <CardHead
+              title={`Answer · ${res.final_model}`}
+              sub={`quality ${res.quality_score} (${res.quality_method}) · cost ${usd(res.actual_cost_usd)} · baseline ${usd(res.baseline_cost_usd)} · saved ${res.savings_pct}% · ${res.latency_ms} ms`}
+              actions={
+                <div className="row" style={{ gap: 6 }}>
+                  {res.escalated && <Badge tone="warn">escalated</Badge>}
+                  {res.cache_hit && <Badge tone="good">{res.cache_kind} hit</Badge>}
+                </div>
+              }
+            />
+            <pre className="answer">{res.answer}</pre>
+          </Card>
+        )}
+      </div>
+
+      <div>
+        {res ? (
+          <Card className="trace fade-in">
+            <CardHead title="Decision trace" sub={`capability source: ${res.capability_source}`} />
+            <Flow
+              nodes={[
+                {
+                  title: 'Analyze',
+                  sub: `${res.analysis.task_type} · difficulty ${res.analysis.difficulty_score} · confidence ${res.analysis.confidence}`,
+                },
+                {
+                  title: 'Route',
+                  sub: `${res.routing.selected_model} selected`,
+                  body: (
+                    <div style={{ marginTop: 10, textAlign: 'left' }}>
+                      {(res.routing.candidates || []).map((c) => (
+                        <div key={c.model_id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '3px 0', color: c.qualifies ? 'var(--text)' : 'var(--faint)' }}>
+                          <span>{c.qualifies ? '✓' : '✗'} {c.model_id}</span>
+                          <span className="num">{usd(c.expected_cost_usd)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                },
+                {
+                  title: 'Verify',
+                  sub: res.attempts?.length
+                    ? res.attempts.map((a) => `${a.model_id} ${a.quality} ${a.passed ? '✓' : '✗'}`).join(' → ')
+                    : 'served from cache',
+                  body: res.attempts?.length
+                    ? (
+                      <div style={{ marginTop: 8 }}>
+                        <div className="bar">
+                          <i style={{ width: `${Math.min(100, (res.quality_score || 0) * 100)}%`, background: (res.quality_score || 0) >= 0.75 ? 'var(--good)' : 'var(--warn)' }} />
+                        </div>
+                        <div className="muted" style={{ marginTop: 4 }}>threshold 0.75</div>
+                      </div>
+                    )
+                    : null,
+                },
+                {
+                  title: 'Respond',
+                  sub: `${usd(res.actual_cost_usd)} actual · ${res.savings_pct}% below always-best${res.escalated ? ' · escalated' : ''}`,
+                },
+              ]}
+            />
+            <div style={{ marginTop: 16, borderTop: '1px solid var(--line-soft)', paddingTop: 12 }}>
+              <div className="section-title" style={{ marginBottom: 8 }}>Why this route</div>
+              {(res.decision_reason || []).map((r, i) => (
+                <div key={i} className="muted" style={{ padding: '2px 0', lineHeight: 1.5 }}>· {r}</div>
+              ))}
+            </div>
+          </Card>
+        ) : (
+          !loading && (
+            <Card>
+              <div className="empty">
+                <div className="e-title">No request yet</div>
+                <div>Send a request to see analyze → route → generate → verify, with the model-by-model comparison.</div>
+              </div>
+            </Card>
+          )
+        )}
+      </div>
+    </div>
+  )
+}

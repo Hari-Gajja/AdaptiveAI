@@ -1,0 +1,32 @@
+{
+  "models": [
+    {
+      "model_id": "deepseek-v4-flash",
+      "provider": "opencode",
+      "enabled": true,
+      "display_name": "deepseek-v4-flash",
+      "description": "",
+      "input_per_1M": 0.22,
+      "output_per_1M": 0.66,
+      "cached_per_1M": 0.007,
+      "context_window": 1000000,
+      "profile_status": "profiled",
+      "created_at": "2026-09-04T20:01:21.014117+00:00",
+      "updated_at": "2026-09-04T21:20:14.018511+00:00"
+    },
+    {
+      "model_id": "deepseek-v4-pro",
+      "provider": "opencode",
+      "enabled": true,
+      "display_name": "deepseek-v4-pro",
+      "description": "",
+      "input_per_1M": 0.66,
+      "output_per_1M": 1.98,
+      "cached_per_1M": 0.022,
+      "context_window": 1000000,
+      "profile_status": "profiled",
+      "created_at": "2026-09-04T20:01:21.014117+00:00",
+      "updated_at": "2026-09-04T20:56:22.577586+00:00"
+    }
+  ]
+}

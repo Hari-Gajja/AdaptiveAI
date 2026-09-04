@@ -1,0 +1,22 @@
+{
+  "deepseek-v4-flash": {
+    "reasoning": 0.453,
+    "coding": 0.669,
+    "math": 0.592,
+    "summarization": 0.575,
+    "long_context": 0.859,
+    "general": 0.843,
+    "measured_at": "2026-09-04T20:56:22.580569+00:00",
+    "n": 24
+  },
+  "deepseek-v4-pro": {
+    "reasoning": 0.697,
+    "coding": 0.71,
+    "math": 0.628,
+    "summarization": 0.662,
+    "long_context": 0.888,
+    "general": 0.811,
+    "measured_at": "2026-09-04T20:56:22.580569+00:00",
+    "n": 24
+  }
+}

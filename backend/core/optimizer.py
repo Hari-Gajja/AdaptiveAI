@@ -1,0 +1,216 @@
+"""Request Optimizer — Phase 5 orchestration.
+
+Pipeline: cache-check -> analyze -> route -> generate -> quality-check
+-> escalate (max N) -> cost + counterfactual baseline. MongoDB hooks in later.
+
+Actual cost = SUM over attempts (money really spent, including failed ones).
+Exact cache hits skip the LLM entirely (cost 0, measured savings).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Callable
+
+from backend.config import settings
+from backend.core.cache import CacheEntry, get_cache
+from backend.core.cost import actual_cost_usd, baseline_model, cost_summary
+from backend.core.quality import QualityScore, evaluate
+from backend.core.registry import ModelEntry, get_registry
+from backend.core.router import CandidateView, RoutingDecision, route
+from backend.core.task_analyzer import TaskAnalysis, analyze
+from backend.providers.opencode import GenerateResult, generate
+
+
+@dataclass
+class Attempt:
+    model_id: str
+    answer: str
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int
+    latency_ms: int
+    cost_usd: float
+    quality: QualityScore
+    passed: bool
+
+
+@dataclass
+class OptimizerResult:
+    answer: str
+    analysis: TaskAnalysis
+    routing: RoutingDecision
+    attempts: list[Attempt] = field(default_factory=list)
+    escalated: bool = False
+    total_cost_usd: float = 0.0
+    total_latency_ms: int = 0
+    # cache
+    cache_hit: bool = False
+    cache_kind: str = "miss"  # miss | exact | context
+    tokens_avoided: int = 0
+    cache_saved_usd: float = 0.0
+    cache_saved_kind: str = ""  # "" | "measured" | "estimated"
+    # baseline
+    baseline_model: str = ""
+    baseline_cost_usd: float = 0.0
+    savings_usd: float = 0.0
+    savings_pct: float = 0.0
+
+    @property
+    def initial_model(self) -> str:
+        return self.attempts[0].model_id if self.attempts else ""
+
+    @property
+    def final_model(self) -> str:
+        if self.attempts:
+            return self.attempts[-1].model_id
+        return self.routing.selected_model if self.routing else ""
+
+    @property
+    def final_quality(self) -> QualityScore | None:
+        return self.attempts[-1].quality if self.attempts else None
+
+
+def escalation_order(candidates: list[CandidateView], tried: set[str]) -> list[str]:
+    """Untried models, best expected quality first, cheapest tiebreak."""
+    rest = [c for c in candidates if c.model_id not in tried]
+    rest.sort(key=lambda c: (-c.expected_quality, c.expected_cost_usd))
+    return [c.model_id for c in rest]
+
+
+def _finish_costs(result: OptimizerResult, enabled: list[ModelEntry]) -> None:
+    base = baseline_model(enabled)
+    in_tok = sum(a.input_tokens for a in result.attempts)
+    out_tok = sum(a.output_tokens for a in result.attempts)
+    s = cost_summary(result.total_cost_usd, base, in_tok, out_tok)
+    result.baseline_model = s["baseline_model"]
+    result.baseline_cost_usd = s["baseline_cost_usd"]
+    result.savings_usd = s["savings_usd"]
+    result.savings_pct = s["savings_pct"]
+
+
+def run_prompt(
+    prompt: str,
+    max_tokens: int = 512,
+    temperature: float = 0.2,
+    reference: str | None = None,
+    force_model: str | None = None,
+    max_attempts: int = 2,
+    threshold: float | None = None,
+    context: str | None = None,
+    use_cache: bool = True,
+    _generate: Callable = generate,
+    _evaluate: Callable = evaluate,
+) -> OptimizerResult:
+    """Full pipeline. _generate/_evaluate are injectable for keyless tests."""
+    if not prompt or not prompt.strip():
+        raise ValueError("prompt must not be empty")
+    threshold = settings.quality_threshold if threshold is None else threshold
+    max_attempts = max(1, max_attempts)
+    context = (context or "").strip()
+
+    registry = get_registry()
+    enabled_list = registry.enabled()
+    enabled = {m.model_id: m for m in enabled_list}
+    if not enabled:
+        raise ValueError("no enabled models in registry")
+    if force_model is not None and force_model not in enabled:
+        raise ValueError(f"force_model '{force_model}' is unknown or disabled")
+
+    cache = get_cache()
+    analysis = analyze(prompt, context or None)
+    routing = route(analysis, enabled_list)
+    reasons = list(routing.decision_reason)
+
+    # ---- exact cache hit: skip the LLM entirely (analysis/routing still shown) ----
+    if use_cache:
+        hit = cache.get_exact(prompt)
+        if hit is not None:
+            cache.note_exact_hit(hit)
+            reasons.append(f"Cache EXACT hit: returning stored answer from {hit.model_id}, "
+                           f"skipped LLM call (measured savings ${hit.cost_usd:.6f}).")
+            routing.decision_reason = reasons
+            result = OptimizerResult(
+                answer=hit.answer, analysis=analysis, routing=routing,
+                cache_hit=True, cache_kind="exact",
+                tokens_avoided=hit.input_tokens + hit.output_tokens,
+                cache_saved_usd=hit.cost_usd, cache_saved_kind="measured")
+            _finish_costs_free_hit(result, enabled_list, hit)
+            return result
+
+    # ---- context hit: reusable context seen before, new question ----
+    ctx_tokens = len(context) // 4 if context else 0
+    ctx_hit = cache.get_context(context) if (use_cache and context) else None
+
+    first = force_model or routing.selected_model
+    order = [first] + [m for m in escalation_order(routing.candidates, {first})]
+    order = order[:max_attempts]
+    if force_model and force_model != routing.selected_model:
+        reasons.append(f"Demo override: first attempt forced to {force_model} "
+                       f"(router preferred {routing.selected_model}).")
+
+    result = OptimizerResult(answer="", analysis=analysis, routing=routing)
+    tried: set[str] = set()
+    for i, mid in enumerate(order):
+        entry = enabled[mid]
+        messages = ([{"role": "system", "content": context}] if context else []) + \
+                   [{"role": "user", "content": prompt}]
+        r: GenerateResult = _generate(mid, messages,
+                                      max_tokens=max_tokens, temperature=temperature)
+        q = _evaluate(r.text, prompt, reference)
+        passed = q.overall >= threshold
+        cost = actual_cost_usd(entry, r.input_tokens, r.output_tokens)
+        result.attempts.append(Attempt(
+            model_id=mid, answer=r.text, input_tokens=r.input_tokens,
+            output_tokens=r.output_tokens, cached_tokens=r.cached_tokens,
+            latency_ms=r.latency_ms, cost_usd=round(cost, 6),
+            quality=q, passed=passed))
+        tried.add(mid)
+        if passed:
+            reasons.append(f"Attempt {i + 1} ({mid}): quality {q.overall} >= {threshold} PASS.")
+            break
+        reasons.append(f"Attempt {i + 1} ({mid}): quality {q.overall} < {threshold} FAIL.")
+        if i + 1 < len(order):
+            reasons.append(f"Escalating to {order[i + 1]}.")
+    routing.decision_reason = reasons
+    result.escalated = len(result.attempts) > 1
+    result.answer = result.attempts[-1].answer if result.attempts else ""
+    result.total_cost_usd = round(sum(a.cost_usd for a in result.attempts), 6)
+    result.total_latency_ms = sum(a.latency_ms for a in result.attempts)
+
+    # ---- cache bookkeeping ----
+    if use_cache and result.attempts:
+        last = result.attempts[-1]
+        cache.put(CacheEntry(prompt=prompt, context=context, answer=last.answer,
+                             model_id=last.model_id, input_tokens=last.input_tokens,
+                             output_tokens=last.output_tokens, cost_usd=last.cost_usd,
+                             context_tokens=ctx_tokens))
+        if ctx_hit is not None:
+            price = enabled[last.model_id].input_per_1M
+            cache.note_context_hit(ctx_tokens, price)
+            result.cache_hit = True
+            result.cache_kind = "context"
+            result.tokens_avoided = ctx_tokens
+            result.cache_saved_usd = round(ctx_tokens / 1_000_000 * price, 6)
+            result.cache_saved_kind = "estimated"
+            reasons.append(f"Cache CONTEXT hit: reusable context seen before "
+                           f"({ctx_tokens} tokens, estimated savings ${result.cache_saved_usd:.6f}).")
+            routing.decision_reason = reasons
+        else:
+            cache.note_miss()
+    elif not use_cache:
+        result.cache_kind = "miss"
+
+    _finish_costs(result, enabled_list)
+    return result
+
+
+def _finish_costs_free_hit(result: OptimizerResult, enabled: list[ModelEntry],
+                           hit: CacheEntry) -> None:
+    """Baseline math for exact hits: actual spend 0; baseline computed on the
+    avoided token usage so the counterfactual stays honest."""
+    base = baseline_model(enabled)
+    s = cost_summary(0.0, base, hit.input_tokens, hit.output_tokens)
+    result.baseline_model = s["baseline_model"]
+    result.baseline_cost_usd = s["baseline_cost_usd"]
+    result.savings_usd = s["savings_usd"]
+    result.savings_pct = s["savings_pct"]

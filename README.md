@@ -1,0 +1,175 @@
+# Adaptive Multi-LLM Cost Optimizer
+
+**Minimum capable intelligence for every request — profiled, routed, verified, measured.**
+
+Organizations connect the LLM models they already have. The system learns each
+model's capabilities, understands every request, selects the cheapest model
+capable of solving it, caches reusable context, verifies answer quality,
+escalates when necessary, and measures the actual cost/quality trade-off
+against an always-best-model baseline.
+
+```
+PROFILE → UNDERSTAND → FILTER → OPTIMIZE → GENERATE → VERIFY → ESCALATE → MEASURE → LEARN
+```
+
+## Problem
+
+Every request sent to the strongest (most expensive) model wastes money; every
+request sent to a weak model risks quality. Cost savings claimed without
+quality measurement are not optimization.
+
+## Solution
+
+An intelligent gateway (FastAPI) in front of multiple LLM APIs (OpenCode Go)
+plus a React control center:
+
+- **Model Registry** — org configures any models (no cheap/frontier labels).
+- **Model Profiler** — measures per-category capability scores on our own
+  24-item test set. Scores are *benchmark performance on our set*, never
+  claimed as universal intelligence scores.
+- **Task Analyzer** — transparent heuristics: task type, difficulty 0–1,
+  confidence, required capabilities + thresholds.
+- **Smart Router** — minimize `Cost(m)` subject to
+  `ExpectedQuality(m, task) ≥ RequiredQuality(task)`; low confidence (< 0.60)
+  picks the safest qualifier; nothing qualifies → flagged strongest-fallback.
+- **Quality Evaluator** — deterministic, zero extra LLM calls:
+  `0.5·correctness + 0.3·relevance + 0.2·completeness`, labeled `reference`
+  (grounded) or `estimated` (heuristic, never ground truth).
+- **Escalation** — quality below threshold retries the next-best model
+  (capped attempts, honest summed cost).
+- **Prompt cache** — in-memory: exact-prompt hits skip the LLM (savings
+  `measured`); same-context/new-question hits count avoided tokens (savings
+  `estimated`). Never conflated.
+- **Cost engine** — actual spend + counterfactual always-best baseline
+  (measured tokens × best-model pricing; no duplicate expensive calls).
+- **Benchmark Lab** — 50 reference-scored queries across 10 categories;
+  baseline quality measured on a deterministic n=5 sample.
+
+## Architecture
+
+```
+React (Vite) ──REST──▶ FastAPI ──▶ Optimizer ──┬──▶ Cache check
+                                               ├──▶ Task Analyzer → Router
+                                               ├──▶ OpenCode Go provider
+                                               ├──▶ Quality → Escalate
+                                               ├──▶ Cost + baseline
+                                               └──▶ MongoDB (Atlas) / memory fallback
+```
+
+## Benchmark methodology (read before citing numbers)
+
+- Optimizer runs all N queries live; costs measured.
+- Baseline cost is counterfactual (measured tokens × baseline pricing).
+- Baseline quality is measured on a deterministic sample (n=5), method labeled
+  in every result payload.
+- Cache cold-started; repeated-context items measure warm-up honestly.
+- Lexical overlap scoring caps below 1.0 when prompt vocabulary differs from
+  reference vocabulary by design (e.g. English prompt, code-only reference) —
+  it compares models relatively on one scale. Upgrade path: LLM-as-judge.
+
+## Latest measured result
+
+Full 50-query run, 2026-09-04 (stored document: `GET /api/benchmark/latest`):
+
+| Metric | Value |
+|---|---|
+| Baseline (always `deepseek-v4-pro`) cost | $0.016776 (counterfactual) |
+| Optimizer cost | $0.008914 (measured) |
+| Saved | $0.007862 (46.86%) |
+| Optimizer quality | 0.716 (reference-scored, all 50) |
+| Baseline quality | 0.605 (measured, deterministic n=5 sample) |
+| Quality retention | 118.3% (verify-and-escalate beats single-shot best) |
+| Routing | flash 29 / pro 21 · escalation 62% · cache hits 12% |
+
+Re-run any time from Benchmark Lab; the dashboard always shows the latest
+stored result, never hard-coded numbers.
+
+## Setup
+
+```powershell
+cd llm-cost-optimizer
+Copy-Item .env.example .env   # then set OPENCODE_API_KEY (https://opencode.ai/auth)
+pip install -r backend\requirements.txt
+# Optional: set MONGODB_URI to Atlas; otherwise an in-memory store is used.
+
+# Backend (from llm-cost-optimizer\)
+uvicorn backend.main:app --reload --port 8000
+
+# Frontend (from llm-cost-optimizer\frontend\)
+npm install
+npm run dev   # http://localhost:5173 (proxies /api → :8000)
+```
+
+Phase verification scripts (no API key needed except test_provider live checks):
+
+```powershell
+python backend\test_registry.py
+python backend\test_router.py
+python backend\test_quality.py
+python backend\test_cache_cost.py
+python backend\test_profiler.py
+python backend\test_benchmark.py
+```
+
+## Environment variables
+
+| Var | Purpose |
+|---|---|
+| `OPENCODE_API_KEY` | OpenCode Go key (never touches the frontend) |
+| `OPENCODE_BASE_URL` | Default `https://opencode.ai/zen/go/v1` |
+| `MODEL_A_ID` / `MODEL_B_ID` | Seed registry models |
+| `OPENCODE_SESSION_ID` | Sent as `x-opencode-session` for provider caching |
+| `MONGODB_URI` / `DATABASE_NAME` | Atlas (optional; memory fallback otherwise) |
+| `QUALITY_THRESHOLD` | Escalation bar, default `0.75` |
+
+## API endpoints
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/health` | phase + models |
+| POST | `/api/chat` | full pipeline (`prompt`, `context?`, `force_model?`, `reference_answer?`, `max_attempts?`, `use_cache?`) |
+| POST | `/api/route/preview` | free dry-run (no LLM call) |
+| GET/POST | `/api/models` | registry list / create |
+| GET/PUT/DELETE | `/api/models/{id}` | read / update / delete |
+| GET | `/api/models/profiles` | measured + priors per model |
+| POST | `/api/models/profile` | profile all (background job) |
+| POST | `/api/models/{id}/profile` | profile one (background job) |
+| GET | `/api/models/profile/jobs/{id}` | profiler progress |
+| GET | `/api/analytics` | totals from request history |
+| GET | `/api/routing-stats` | per-model / per-task distribution |
+| GET | `/api/requests/{id}` | stored decision record |
+| GET | `/api/cache/stats` | hits, avoided tokens, measured vs estimated savings |
+| POST | `/api/cache/clear` | reset cache |
+| GET | `/api/benchmark/queries` | dataset inventory |
+| POST | `/api/benchmark/run` | start benchmark job (`limit`, `baseline_sample_n`) |
+| GET | `/api/benchmark/jobs/{id}` | progress |
+| GET | `/api/benchmark/latest` | last completed result |
+| POST | `/api/test/generate` | single-model smoke test |
+
+## MongoDB schema (db `llm_optimizer`)
+
+- `requests`: prompt, task_type, difficulty_score, confidence,
+  required_capabilities, selected/initial/final model, cache_hit/kind,
+  tokens, actual/baseline cost, quality_score/method, escalated, latency,
+  capability_source, timestamp.
+- `benchmarks`: full benchmark result documents (see runner).
+- Registry/profiles stay in `backend/data/*.json` (single-writer MVP).
+
+## Limitations
+
+- Quality is lexical (see methodology), not semantic; strict 0.75 bar drives
+  high escalation rates on terse answers.
+- Capability profiles measured on 4 samples/category — expect noise; the UI
+  labels measured vs estimated everywhere.
+- In-memory cache + JSON registry are single-process (fine for the hackathon,
+  not for multi-replica prod).
+- Baseline quality from an n=5 sample — reported with n, not hidden.
+
+## Future improvements
+
+- LLM-as-judge quality + semantic (embedding) similarity.
+- More profiler items per category; scheduled re-profiling from live outcomes
+  (the LEARN step is currently manual re-run).
+- Provider-side prompt caching wired to measured cache-read billing.
+- Per-model latency tracking in routing; budget-constrained routing mode.
+- Auth + multi-tenant quotas.
