@@ -14,6 +14,11 @@ class BenchmarkStart(BaseModel):
     limit: int = 0  # 0 = all queries
     baseline_sample_n: int = 5
     baseline_quality_mode: str = "sampled"  # sampled | full
+    mode: str = "full_optimizer"  # Phase 8 A/B mode (see MODES)
+
+
+MODES = ("always_frontier", "legacy_classifier", "opencode_classifier",
+         "exact_cache", "full_optimizer", "full_plus_llm_eval")
 
 
 @router.get("/queries")
@@ -33,10 +38,14 @@ def benchmark_run(body: BenchmarkStart):
         raise HTTPException(400, f"limit must be 0..{total}")
     if body.baseline_quality_mode not in ("sampled", "full"):
         raise HTTPException(400, "baseline_quality_mode must be sampled or full")
-    return {"job_id": start_job(body.limit, body.baseline_sample_n, body.baseline_quality_mode),
+    if body.mode not in MODES:
+        raise HTTPException(400, f"mode must be one of {MODES}")
+    return {"job_id": start_job(body.limit, body.baseline_sample_n,
+                                body.baseline_quality_mode, body.mode),
             "queries": body.limit or total,
             "baseline_sample_n": body.baseline_sample_n,
-            "baseline_quality_mode": body.baseline_quality_mode}
+            "baseline_quality_mode": body.baseline_quality_mode,
+            "mode": body.mode}
 
 
 @router.get("/jobs/{job_id}")

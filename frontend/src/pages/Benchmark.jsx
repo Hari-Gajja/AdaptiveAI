@@ -25,6 +25,7 @@ export default function Benchmark() {
   const [err, setErr] = useState('')
   const [filter, setFilter] = useState('all')
   const [revealKey, setRevealKey] = useState(0)
+  const [mode, setMode] = useState('full_optimizer')
 
   const loadLatest = (bump = true) => api.benchmarkLatest().then((d) => {
     setLatest((prev) => {
@@ -44,7 +45,7 @@ export default function Benchmark() {
   const run = async (limit, baselineQualityMode = 'sampled') => {
     setErr('')
     try {
-      const { job_id } = await api.benchmarkRun(limit, 5, baselineQualityMode)
+      const { job_id } = await api.benchmarkRun(limit, 5, baselineQualityMode, mode)
       setJob({ job_id, status: 'running', done: 0, total: limit || (info?.count ?? 50) })
       const poll = setInterval(async () => {
         const j = await api.benchmarkJob(job_id)
@@ -68,7 +69,15 @@ export default function Benchmark() {
           title="Benchmark lab"
           sub="Optimizer vs always-best — measured, not claimed."
           actions={
-            <div className="row" style={{ gap: 8 }}>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <select className="input sm" value={mode} onChange={(e) => setMode(e.target.value)} style={{ maxWidth: 220 }} disabled={job && job.status === 'running'}>
+                <option value="always_frontier">A/B: Always frontier</option>
+                <option value="legacy_classifier">A/B: Legacy classifier</option>
+                <option value="opencode_classifier">A/B: OpenCode classifier</option>
+                <option value="exact_cache">A/B: OpenCode + exact cache</option>
+                <option value="full_optimizer">A/B: Full optimizer</option>
+                <option value="full_plus_llm_eval">A/B: Full + LLM eval</option>
+              </select>
               <button className="btn ghost sm" onClick={() => run(10)} disabled={job && job.status === 'running'}>Run 10 (smoke)</button>
               <button className="btn primary" onClick={() => run(0, 'sampled')} disabled={job && job.status === 'running'}>
                 {job && job.status === 'running' ? `Running ${job.done}/${job.total}` : 'Run full benchmark'}
@@ -109,9 +118,10 @@ export default function Benchmark() {
         <div style={{ marginTop: 18 }} key={revealKey}>
           <div className={`phase phase-1${phase >= 1 ? ' in' : ''}`}>
           <div className="kpis">
-            <KPI label="Queries" value={latest.queries_tested} sub="reference-scored" />
+            <KPI label="Queries" value={latest.queries_tested} sub={`mode: ${latest.mode || 'full_optimizer'}`} />
             <KPI label="Always-best" value={usd(latest.baseline_cost)} sub={`${latest.baseline_model} · ${latest.baseline_quality_mode || 'sampled'} quality`} />
             <KPI label="Optimizer" value={usd(latest.optimizer_cost)} sub={`saved ${usd(latest.savings)} (${pct(latest.savings_pct)})`} tone="up" />
+            <KPI label="Net saved (incl. CP)" value={usd(latest.net_savings ?? latest.savings)} sub={`CP overhead ${usd(latest.control_plane_cost_usd ?? 0)} · ${pct(latest.net_savings_pct ?? latest.savings_pct)}`} tone="up" />
             <KPI label="Quality" value={`${(latest.optimizer_quality * 100).toFixed(1)}%`} sub={`baseline ${latest.baseline_quality != null ? (latest.baseline_quality * 100).toFixed(1) + '%' : 'N/A'} · retained ${latest.quality_retention != null ? (latest.quality_retention * 100).toFixed(1) + '%' : 'N/A'}`} />
             <KPI label="Cache hits" value={`${(latest.cache_hit_rate * 100).toFixed(0)}%`} sub="exact + context" />
             <KPI label="Escalations" value={`${(latest.escalation_rate * 100).toFixed(0)}%`} sub={`${latest.escalation_count ?? Math.round(latest.escalation_rate * latest.queries_tested)} · avg ${latest.avg_latency_ms} ms`} />
@@ -127,6 +137,15 @@ export default function Benchmark() {
               <KPI label="Semantic cache" value={latest.semantic_cache_hits ?? 0} sub="gate-safe similar prompts" />
               <KPI label="Context cache" value={latest.context_cache_hits ?? 0} sub={`${latest.estimated_tokens_avoided ?? 0} estimated tokens avoided`} />
               <KPI label="Median latency" value={latest.median_latency_ms != null ? `${latest.median_latency_ms} ms` : 'N/A'} sub="successful requests" />
+            </div>
+          </Card>
+          <Card style={{ marginTop: 18 }}>
+            <CardHead title="Control plane accounting" sub="Total = Control Plane + Task Model. Overhead is subtracted from savings (net_savings)." />
+            <div className="kpis">
+              <KPI label="CP calls" value={latest.control_plane_calls ?? 0} sub={`${latest.control_plane_fallbacks ?? 0} fallbacks to legacy`} />
+              <KPI label="CP tokens" value={latest.control_plane_tokens ?? 0} sub="classifier + verifier + evaluator" />
+              <KPI label="CP cost" value={usd(latest.control_plane_cost_usd ?? 0)} sub="priced with CP model rates" />
+              <KPI label="CP latency" value={latest.control_plane_latency_ms != null ? `${latest.control_plane_latency_ms} ms` : 'N/A'} sub="summed across calls" />
             </div>
           </Card>
           </div>

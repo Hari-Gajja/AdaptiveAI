@@ -1,7 +1,16 @@
-"""Request Optimizer — Phase 5 orchestration.
+"""Request Optimizer — Phase 5 orchestration + Phase 8 control plane.
 
 Pipeline: cache-check -> analyze -> route -> generate -> quality-check
 -> escalate (max N) -> cost + counterfactual baseline. MongoDB hooks in later.
+
+Phase 8 (OpenCode control plane):
+  - classification via backend.llm.opencode_classifier (legacy fallback)
+  - semantic-cache reuse double-checked by backend.llm.cache_verifier
+    (ONLY after all deterministic gates passed; verifier can veto, never approve)
+  - subjective quality via backend.llm.opencode_evaluator (deterministic
+    fallback on failure)
+  - all control-plane token spend tracked in a ControlPlaneLedger:
+    Total Cost = Control Plane + Task Model
 
 Actual cost = SUM over attempts (money really spent, including failed ones).
 Exact cache hits skip the LLM entirely (cost 0, measured savings).
@@ -18,6 +27,11 @@ from backend.core.quality import QualityScore, evaluate
 from backend.core.registry import ModelEntry, get_registry
 from backend.core.router import CandidateView, RoutingDecision, route
 from backend.core.task_analyzer import TaskAnalysis, analyze
+from backend.llm import config as cp_cfg
+from backend.llm.cache_verifier import verify_reuse
+from backend.llm.ledger import ControlPlaneLedger, empty_ledger
+from backend.llm.opencode_classifier import classify_prompt
+from backend.llm.opencode_evaluator import evaluate_with_llm
 from backend.providers.opencode import GenerateResult, generate
 from backend.providers.opencode import OpenCodeError
 
@@ -63,6 +77,14 @@ class OptimizerResult:
     quality_passed: bool = False
     verification_status: str = "not_run"
     max_attempts_reached: bool = False
+    # --- Phase 8: control plane ---
+    ledger: ControlPlaneLedger = field(default_factory=lambda: empty_ledger())
+    quality_checks: int = 0
+    quality_passes: int = 0
+    quality_failures: int = 0
+    frontier_escalations: int = 0
+    cache_verifier: dict | None = None
+    quality_evaluator: dict | None = None
 
     @property
     def initial_model(self) -> str:
@@ -110,15 +132,24 @@ def run_prompt(
     threshold: float | None = None,
     context: str | None = None,
     use_cache: bool = True,
+    classifier_backend: str | None = None,
+    quality_check_mode: str | None = None,
+    cache_verify: bool | None = None,
     _generate: Callable = generate,
     _evaluate: Callable = evaluate,
 ) -> OptimizerResult:
-    """Full pipeline. _generate/_evaluate are injectable for keyless tests."""
+    """Full pipeline. _generate/_evaluate are injectable for keyless tests.
+    classifier_backend/quality_check_mode/cache_verify override the env config
+    per request (used by the benchmark A/B modes)."""
     if not prompt or not prompt.strip():
         raise ValueError("prompt must not be empty")
     threshold = settings.quality_threshold if threshold is None else threshold
     max_attempts = max(1, max_attempts)
     context = (context or "").strip()
+
+    backend_cls = classifier_backend or cp_cfg.CLASSIFIER_BACKEND
+    qmode = (quality_check_mode or cp_cfg.QUALITY_CHECK_MODE).lower()
+    do_verify = cp_cfg.CACHE_VERIFY_ENABLED if cache_verify is None else cache_verify
 
     registry = get_registry()
     enabled_list = registry.enabled()
@@ -129,9 +160,26 @@ def run_prompt(
         raise ValueError(f"force_model '{force_model}' is unknown or disabled")
 
     cache = get_cache()
-    analysis = analyze(prompt, context or None)
+    ledger = ControlPlaneLedger(model_id=cp_cfg.OPENCODE_MODEL)
+    cp_active = cp_cfg.OPENCODE_ENABLED and backend_cls == "opencode"
+    ledger.status = "active" if cp_active else "disabled"
+
+    # ---- classification (control plane when enabled, legacy otherwise) ----
+    analysis = classify_prompt(prompt, context or None, force_backend=backend_cls)
+    if analysis.backend == "opencode" and analysis.control_plane:
+        cp = analysis.control_plane
+        ledger.record("classifier", cp.get("input_tokens"), cp.get("output_tokens"),
+                      cp.get("latency_ms", 0), bool(cp.get("usage_estimated")))
+    if analysis.fallback_used:
+        ledger.fallback_used = True
+        ledger.fallback_reason = analysis.fallback_reason
+        if ledger.status == "active":
+            ledger.status = "degraded"
     routing = route(analysis, enabled_list)
     reasons = list(routing.decision_reason)
+    if analysis.fallback_used:
+        reasons.append(f"Classifier fallback: {analysis.fallback_reason}. "
+                       f"Legacy heuristic classification used.")
 
     # ---- exact cache hit: skip the LLM entirely (analysis/routing still shown) ----
     if use_cache:
@@ -141,33 +189,61 @@ def run_prompt(
             reasons.append(f"Cache EXACT hit: returning stored answer from {hit.model_id}, "
                            f"skipped LLM call (measured savings ${hit.cost_usd:.6f}).")
             routing.decision_reason = reasons
+            ledger.finalize()
             result = OptimizerResult(
                 answer=hit.answer, analysis=analysis, routing=routing,
                 cache_hit=True, cache_kind="exact",
                 tokens_avoided=hit.input_tokens + hit.output_tokens,
-                cache_saved_usd=hit.cost_usd, cache_saved_kind="measured" if hit.cost_usd is not None else "unavailable")
+                cache_saved_usd=hit.cost_usd, cache_saved_kind="measured" if hit.cost_usd is not None else "unavailable",
+                ledger=ledger)
             _finish_costs_free_hit(result, enabled_list, hit)
             return result
 
         # ---- semantic cache hit: similar prompt + ALL safety gates pass ----
         sem_hit, sem_score, vetoes = cache.lookup_semantic(prompt, context)
         if sem_hit is not None:
-            cache.note_semantic_hit(sem_hit, sem_score)
-            reasons.append(
-                f"Cache SEMANTIC hit (similarity {sem_score:.2f} >= {cache._sem_threshold}): "
-                f"all safety gates passed (numbers, operators, ordinals, units, directions, "
-                f"language, structures, identifiers, intent, negation, context). "
-                f"Returning stored answer from {sem_hit.model_id}, skipped LLM call "
-                f"(measured savings ${sem_hit.cost_usd:.6f}).")
-            routing.decision_reason = reasons
-            result = OptimizerResult(
-                answer=sem_hit.answer, analysis=analysis, routing=routing,
-                cache_hit=True, cache_kind="semantic",
-                tokens_avoided=sem_hit.input_tokens + sem_hit.output_tokens,
-                cache_saved_usd=sem_hit.cost_usd,
-                cache_saved_kind="measured" if sem_hit.cost_usd is not None else "unavailable")
-            _finish_costs_free_hit(result, enabled_list, sem_hit)
-            return result
+            # Phase 8: gates passed -> optional LLM verifier double-check.
+            # The verifier can VETO (treat as miss) but can never approve a
+            # reuse the gates blocked (we are only here because gates passed).
+            verify_outcome = None
+            reuse = True
+            if do_verify and cp_active:
+                verify_outcome = verify_reuse(prompt, sem_hit.answer)
+                ledger.record("cache_verifier", verify_outcome.input_tokens,
+                              verify_outcome.output_tokens,
+                              verify_outcome.latency_ms,
+                              verify_outcome.usage_estimated)
+                if verify_outcome.skipped:
+                    reasons.append(f"Cache verifier skipped: {verify_outcome.reason}")
+                    reuse = True
+                elif verify_outcome.verified:
+                    reasons.append(f"Cache verifier: {verify_outcome.reason}")
+                    reuse = True
+                else:
+                    reasons.append(f"Cache verifier: {verify_outcome.reason}")
+                    reuse = False
+            if reuse:
+                cache.note_semantic_hit(sem_hit, sem_score)
+                reasons.append(
+                    f"Cache SEMANTIC hit (similarity {sem_score:.2f} >= {cache._sem_threshold}): "
+                    f"all safety gates passed (numbers, operators, ordinals, units, directions, "
+                    f"language, structures, identifiers, intent, negation, context). "
+                    f"Returning stored answer from {sem_hit.model_id}, skipped LLM call "
+                    f"(measured savings ${sem_hit.cost_usd:.6f}).")
+                routing.decision_reason = reasons
+                ledger.finalize()
+                result = OptimizerResult(
+                    answer=sem_hit.answer, analysis=analysis, routing=routing,
+                    cache_hit=True, cache_kind="semantic",
+                    tokens_avoided=sem_hit.input_tokens + sem_hit.output_tokens,
+                    cache_saved_usd=sem_hit.cost_usd,
+                    cache_saved_kind="measured" if sem_hit.cost_usd is not None else "unavailable",
+                    ledger=ledger,
+                    cache_verifier=verify_outcome.view() if verify_outcome else None)
+                _finish_costs_free_hit(result, enabled_list, sem_hit)
+                return result
+            # verifier vetoed: fall through to routing as a miss
+            cache.note_semantic_veto(["llm_verifier_veto"])
         if vetoes:
             cache.note_semantic_veto(vetoes)
             reasons.append(
@@ -188,7 +264,7 @@ def run_prompt(
         reasons.append(f"Demo override: first attempt forced to {force_model} "
                        f"(router preferred {routing.selected_model}).")
 
-    result = OptimizerResult(answer="", analysis=analysis, routing=routing)
+    result = OptimizerResult(answer="", analysis=analysis, routing=routing, ledger=ledger)
     tried: set[str] = set()
     for i, mid in enumerate(order):
         entry = enabled[mid]
@@ -210,8 +286,32 @@ def run_prompt(
                 reasons.append(f"Provider failure fallback to {order[i + 1]}.")
                 continue
             break
-        q = _evaluate(r.text, prompt, reference)
+        # ---- quality check (Phase 8 modes) ----
+        # off:        deterministic reference scoring only (no LLM judge)
+        # benchmark:  reference scoring when a reference exists; no LLM judge
+        # live:       subjective tasks without reference -> LLM evaluator
+        use_llm_judge = (qmode == "live" and reference is None
+                         and cp_active and _evaluate is evaluate)
+        if use_llm_judge:
+            q, cp_eval_view = evaluate_with_llm(r.text, prompt)
+            result.quality_evaluator = cp_eval_view
+            if cp_eval_view.get("used"):
+                ledger.record("evaluator", cp_eval_view.get("input_tokens"),
+                              cp_eval_view.get("output_tokens"),
+                              cp_eval_view.get("latency_ms", 0),
+                              bool(cp_eval_view.get("usage_estimated")))
+            if cp_eval_view.get("fallback_used") and not cp_eval_view.get("used"):
+                ledger.fallback_used = True
+                ledger.fallback_reason = ledger.fallback_reason or \
+                    f"evaluator: {cp_eval_view.get('fallback_reason', '')}"
+        else:
+            q = _evaluate(r.text, prompt, reference)
+        result.quality_checks += 1
         passed = q.overall >= threshold
+        if passed:
+            result.quality_passes += 1
+        else:
+            result.quality_failures += 1
         cost = actual_cost_usd(entry, r.input_tokens, r.output_tokens)
         result.attempts.append(Attempt(
             model_id=mid, answer=r.text, input_tokens=r.input_tokens,
@@ -220,11 +320,14 @@ def run_prompt(
             quality=q, passed=passed))
         tried.add(mid)
         if passed:
-            reasons.append(f"Attempt {i + 1} ({mid}): quality {q.overall} >= {threshold} PASS.")
+            reasons.append(f"Attempt {i + 1} ({mid}): quality {q.overall} >= {threshold} PASS "
+                           f"({q.method}/{q.scoring_detail}).")
             break
         reasons.append(f"Attempt {i + 1} ({mid}): quality {q.overall} < {threshold} FAIL.")
         if i + 1 < len(order):
             reasons.append(f"Escalating to {order[i + 1]}.")
+            # Escalation to a stronger model because quality failed.
+            result.frontier_escalations += 1
     routing.decision_reason = reasons
     result.escalated = len(result.attempts) > 1
     result.answer = next((a.answer for a in reversed(result.attempts) if a.answer), "")
@@ -264,6 +367,7 @@ def run_prompt(
     elif not use_cache:
         result.cache_kind = "miss"
 
+    ledger.finalize()
     _finish_costs(result, enabled_list)
     return result
 

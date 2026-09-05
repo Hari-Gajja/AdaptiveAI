@@ -49,12 +49,45 @@ plus a React control center:
 
 ```
 React (Vite) ──REST──▶ FastAPI ──▶ Optimizer ──┬──▶ Cache check
+                                               ├──▶ Control plane (OpenCode)
+                                               │     ├─ classifier (task type/difficulty)
+                                               │     ├─ cache verifier (veto-only)
+                                               │     └─ LLM evaluator (subjective only)
                                                ├──▶ Task Analyzer → Router
                                                ├──▶ OpenCode Go provider
                                                ├──▶ Quality → Escalate
                                                ├──▶ Cost + baseline
                                                └──▶ MongoDB (Atlas) / memory fallback
 ```
+
+### Control plane (Phase 8)
+
+The optimizer now uses a small, cheap OpenCode model as a **control plane** for
+three jobs, reusing the exact same provider module as task generation:
+
+1. **Classifier** — replaces the keyword heuristic with an LLM call that
+   returns `{task_type, difficulty, confidence}` as strict JSON. On any
+   failure (timeout, malformed JSON, disabled, unpriced model) it falls back
+   to the legacy deterministic analyzer and the ledger is marked `degraded`.
+2. **Cache verifier** — when a semantic-cache candidate passes ALL
+   deterministic safety gates, an optional LLM double-check can **veto** the
+   reuse. It can never approve a reuse the gates blocked — it only runs after
+   the gates pass and a veto simply falls through to normal routing.
+3. **LLM evaluator** — for **subjective** tasks only (no reference answer,
+   non-math), an LLM judge grades correctness/relevance. Math and
+   reference-scored tasks keep deterministic scoring.
+
+**Cost accounting is honest:** every control-plane call's tokens are recorded
+in a per-request `ControlPlaneLedger` and priced with the control-plane
+model's registry rates. The API reports `control_plane_cost_usd` and
+`total_cost_incl_cp_usd`; the benchmark reports `net_savings_pct` = savings
+minus control-plane overhead. Usage is provider-reported when available,
+otherwise estimated at chars/4 and flagged `usage_estimated` — never
+fabricated.
+
+Per-request A/B knobs (used by the Benchmark Lab mode selector):
+`classifier_backend` (`opencode` | `legacy_ml`), `quality_check_mode`
+(`off` | `benchmark` | `live`), `cache_verify` (bool).
 
 ## Benchmark methodology (read before citing numbers)
 
@@ -105,6 +138,7 @@ python backend\test_quality.py
 python backend\test_cache_cost.py
 python backend\test_profiler.py
 python backend\test_benchmark.py
+python backend\test_control_plane.py
 ```
 
 ## Environment variables
@@ -117,6 +151,14 @@ python backend\test_benchmark.py
 | `OPENCODE_SESSION_ID` | Sent as `x-opencode-session` for provider caching |
 | `MONGODB_URI` / `DATABASE_NAME` | Atlas (optional; memory fallback otherwise) |
 | `QUALITY_THRESHOLD` | Escalation bar, default `0.75` |
+| `OPENCODE_ENABLED` | Control-plane master switch (default `true`) |
+| `OPENCODE_MODEL` | Control-plane model (default `deepseek-v4-flash`) |
+| `OPENCODE_TIMEOUT_SECONDS` | Per-call CP timeout (default `20`) |
+| `CLASSIFIER_BACKEND` | `opencode` or `legacy_ml` (default `opencode`) |
+| `QUALITY_CHECK_MODE` | `off` / `benchmark` / `live` (default `live`) |
+| `CACHE_VERIFY_ENABLED` | Veto-only semantic-reuse verifier (default `true`) |
+| `CONTROL_PLANE_PROMPT_MAX_CHARS` | CP prompt clip (default `1200`) |
+| `CLASSIFIER_MAX_OUTPUT_TOKENS` / `VERIFIER_MAX_OUTPUT_TOKENS` / `EVALUATOR_MAX_OUTPUT_TOKENS` | CP output budgets (50/40/80) |
 
 ## API endpoints
 
@@ -131,13 +173,14 @@ python backend\test_benchmark.py
 | POST | `/api/models/profile` | profile all (background job) |
 | POST | `/api/models/{id}/profile` | profile one (background job) |
 | GET | `/api/models/profile/jobs/{id}` | profiler progress |
+| GET | `/api/models/control-plane` | CP config, budgets, health, lifetime stats |
 | GET | `/api/analytics` | totals from request history |
 | GET | `/api/routing-stats` | per-model / per-task distribution |
 | GET | `/api/requests/{id}` | stored decision record |
 | GET | `/api/cache/stats` | hits, avoided tokens, measured vs estimated savings |
 | POST | `/api/cache/clear` | reset cache |
 | GET | `/api/benchmark/queries` | dataset inventory |
-| POST | `/api/benchmark/run` | start benchmark job (`limit`, `baseline_sample_n`) |
+| POST | `/api/benchmark/run` | start benchmark job (`limit`, `baseline_sample_n`, `mode`) |
 | GET | `/api/benchmark/jobs/{id}` | progress |
 | GET | `/api/benchmark/latest` | last completed result |
 | POST | `/api/test/generate` | single-model smoke test |
@@ -160,12 +203,19 @@ python backend\test_benchmark.py
 - In-memory cache + JSON registry are single-process (fine for the hackathon,
   not for multi-replica prod).
 - Baseline quality from an n=5 sample — reported with n, not hidden.
+- Control-plane usage is provider-reported when available, otherwise estimated
+  at chars/4 and flagged `usage_estimated`; CP latency adds to per-request
+  latency (bounded by `OPENCODE_TIMEOUT_SECONDS`).
+- The LLM evaluator is a judge, not ground truth; subjective scores are
+  labeled `llm_judge` and can disagree with human grading.
 
 ## Future improvements
 
-- LLM-as-judge quality + semantic (embedding) similarity.
+- Semantic (embedding) similarity for the cache tier.
 - More profiler items per category; scheduled re-profiling from live outcomes
   (the LEARN step is currently manual re-run).
 - Provider-side prompt caching wired to measured cache-read billing.
 - Per-model latency tracking in routing; budget-constrained routing mode.
 - Auth + multi-tenant quotas.
+- Aggregate control-plane spend in analytics (currently per-request ledger +
+  benchmark totals).

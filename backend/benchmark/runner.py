@@ -46,7 +46,8 @@ def _sample_indices(n: int, k: int) -> list[int]:
 
 def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
                   baseline_quality_mode: str = "sampled",
-                  progress=None, _run=None, _generate=None) -> dict:
+                  progress=None, _run=None, _generate=None,
+                  mode: str = "full_optimizer") -> dict:
     from backend.core.cache import get_cache
     from backend.core.cost import baseline_model
     from backend.core.optimizer import run_prompt
@@ -77,12 +78,43 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
     latencies: list[int] = []
     failed_requests = 0
     total_in = total_out = 0
+    # Phase 8 A/B mode knobs (see MODES below)
+    cp_ledgers: list[dict] = []
+    cp_cost = 0.0
+    cp_tokens = 0
+    cp_latency = 0
+    cp_calls = 0
+    cp_fallbacks = 0
+    routing_agree = 0
+    routing_total = 0
+    classification_correct = 0
+    classification_total = 0
+    confusion: Counter = Counter()
 
     for i, q in enumerate(queries):
+        # Phase 8 A/B mode knobs:
+        #   always_frontier      -> force the baseline (frontier) model, no cache
+        #   legacy_classifier    -> legacy ML classifier + legacy routing, no cache
+        #   opencode_classifier  -> OpenCode classifier + routing, no cache
+        #   exact_cache          -> OpenCode + exact cache only
+        #   full_optimizer       -> OpenCode + full optimizer (semantic+context cache)
+        #   full_plus_llm_eval   -> full optimizer + LLM evaluator (live mode)
+        run_kwargs: dict = {"reference": q.get("reference_answer"),
+                            "context": q.get("context"),
+                            "max_tokens": q.get("max_tokens", 256),
+                            "use_cache": True}
+        if mode == "always_frontier":
+            run_kwargs.update({"force_model": base_entry.model_id, "use_cache": False})
+        elif mode == "legacy_classifier":
+            run_kwargs.update({"classifier_backend": "legacy_ml", "use_cache": False})
+        elif mode == "opencode_classifier":
+            run_kwargs.update({"use_cache": False})
+        elif mode == "exact_cache":
+            run_kwargs.update({"cache_verify": False})
+        elif mode == "full_plus_llm_eval":
+            run_kwargs.update({"quality_check_mode": "live"})
         try:
-            res = _run(q["prompt"], reference=q.get("reference_answer"),
-                       context=q.get("context"),
-                       max_tokens=q.get("max_tokens", 256), use_cache=True)
+            res = _run(q["prompt"], **run_kwargs)
         except Exception as e:
             failed_requests += 1
             per_query.append({
@@ -123,6 +155,17 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
             estimated_tokens_avoided += res.tokens_avoided
         lat += res.total_latency_ms
         latencies.append(res.total_latency_ms)
+        # Phase 8: control-plane accounting per query
+        led = res.ledger
+        cp_ledgers.append(led.view())
+        cp_cost += led.total_cost_usd
+        cp_tokens += led.total_input_tokens + led.total_output_tokens
+        cp_latency += led.total_latency_ms
+        cp_calls += led.total_calls
+        cp_fallbacks += 1 if led.fallback_used else 0
+        # routing agreement: legacy vs opencode classification path
+        if getattr(res.analysis, "backend", None) == "opencode":
+            routing_total += 1
         savings = round(b_cost - res.total_cost_usd, 6)
         per_query.append({
             "id": q.get("id"), "category": q.get("category"),
@@ -178,16 +221,27 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
     opt_q = round(sum(quals) / len(quals), 3) if quals else 0.0
     base_q = round(sum(base_quals) / len(base_quals), 3) if base_quals else None
     savings = base_cost - opt_cost
+    # Phase 8: net savings include control-plane overhead (honest accounting)
+    net_savings = savings - cp_cost
     return {
         "queries_tested": n,
         "successful_requests": n - failed_requests,
         "failed_requests": failed_requests,
+        "mode": mode,
         "optimizer_cost": round(opt_cost, 6),
         "baseline_cost": round(base_cost, 6),
         "baseline_model": base_entry.model_id,
         "baseline_cost_method": "counterfactual (measured tokens x baseline pricing)",
         "savings": round(savings, 6),
         "savings_pct": round(100.0 * savings / base_cost, 2) if base_cost > 0 else 0.0,
+        # control-plane overhead + net (Total = Control Plane + Task Model)
+        "control_plane_cost_usd": round(cp_cost, 6),
+        "control_plane_tokens": cp_tokens,
+        "control_plane_calls": cp_calls,
+        "control_plane_latency_ms": cp_latency,
+        "control_plane_fallbacks": cp_fallbacks,
+        "net_savings": round(net_savings, 6),
+        "net_savings_pct": round(100.0 * net_savings / base_cost, 2) if base_cost > 0 else 0.0,
         "optimizer_quality": opt_q,
         "optimizer_quality_method": "reference-scored, all queries",
         "baseline_quality": base_q,
@@ -215,7 +269,8 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
     }
 
 
-def _run_job(job_id: str, limit: int, baseline_sample_n: int, baseline_quality_mode: str) -> None:
+def _run_job(job_id: str, limit: int, baseline_sample_n: int, baseline_quality_mode: str,
+             mode: str = "full_optimizer") -> None:
     from backend.database.mongodb import get_store
     try:
         queries = load_queries()
@@ -226,7 +281,8 @@ def _run_job(job_id: str, limit: int, baseline_sample_n: int, baseline_quality_m
             with _jobs_lock:
                 _jobs[job_id].update({"done": done, "total": total})
 
-        result = run_benchmark(queries, baseline_sample_n, baseline_quality_mode, progress)
+        result = run_benchmark(queries, baseline_sample_n, baseline_quality_mode,
+                               progress, mode=mode)
         result["limit"] = limit
         get_store().store_benchmark(result)
         with _jobs_lock:
@@ -238,14 +294,17 @@ def _run_job(job_id: str, limit: int, baseline_sample_n: int, baseline_quality_m
 
 
 def start_job(limit: int = 0, baseline_sample_n: int = 5,
-              baseline_quality_mode: str = "sampled") -> str:
+              baseline_quality_mode: str = "sampled",
+              mode: str = "full_optimizer") -> str:
     job_id = uuid.uuid4().hex[:8]
     with _jobs_lock:
         _jobs[job_id] = {"job_id": job_id, "status": "running", "done": 0,
                          "total": limit or len(load_queries()),
                          "limit": limit, "baseline_sample_n": baseline_sample_n,
-                         "baseline_quality_mode": baseline_quality_mode}
-    threading.Thread(target=_run_job, args=(job_id, limit, baseline_sample_n, baseline_quality_mode),
+                         "baseline_quality_mode": baseline_quality_mode,
+                         "mode": mode}
+    threading.Thread(target=_run_job,
+                     args=(job_id, limit, baseline_sample_n, baseline_quality_mode, mode),
                      daemon=True).start()
     return job_id
 

@@ -13,6 +13,11 @@ from backend.core.registry import (
     get_registry,
     public_view,
 )
+from backend.llm import config as cp_cfg
+from backend.llm.opencode_client import (
+    control_plane_stats,
+    health as cp_health,
+)
 from backend.providers.opencode import OpenCodeError, list_models
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -54,6 +59,28 @@ def model_profiles():
             "measured_at": (profiles.get(m.model_id, {}) or {}).get("measured_at"),
         })
     return {"profiles": out}
+
+
+@router.get("/control-plane")
+def control_plane_status():
+    """Phase 8: control-plane health, config, and lifetime call counters."""
+    h = cp_health()
+    stats = control_plane_stats()  # already a dict (view())
+    return {
+        "enabled": cp_cfg.OPENCODE_ENABLED,
+        "model_id": cp_cfg.OPENCODE_MODEL,
+        "classifier_backend": cp_cfg.CLASSIFIER_BACKEND,
+        "quality_check_mode": cp_cfg.QUALITY_CHECK_MODE,
+        "cache_verify_enabled": cp_cfg.CACHE_VERIFY_ENABLED,
+        "budgets": {
+            "classifier_max_output_tokens": cp_cfg.CLASSIFIER_MAX_OUTPUT_TOKENS,
+            "verifier_max_output_tokens": cp_cfg.VERIFIER_MAX_OUTPUT_TOKENS,
+            "evaluator_max_output_tokens": cp_cfg.EVALUATOR_MAX_OUTPUT_TOKENS,
+            "timeout_seconds": cp_cfg.OPENCODE_TIMEOUT_SECONDS,
+        },
+        "health": h,
+        "stats": stats,
+    }
 
 
 @router.get("/{model_id}")

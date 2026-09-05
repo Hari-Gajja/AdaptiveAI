@@ -12,6 +12,9 @@ from backend.core.optimizer import run_prompt
 from backend.core.registry import get_registry
 from backend.core.router import NoCapableModel, route
 from backend.core.task_analyzer import analyze
+from backend.llm import config as cp_cfg
+from backend.llm.opencode_classifier import classify_prompt
+from backend.llm.opencode_client import control_plane_stats, health as cp_health
 from backend.providers.opencode import OpenCodeError
 
 router = APIRouter(tags=["chat"])
@@ -35,7 +38,7 @@ class PreviewRequest(BaseModel):
 
 
 def _analysis_view(a) -> dict:
-    return {
+    view = {
         "task_type": a.task_type,
         "difficulty_score": a.difficulty_score,
         "confidence": a.confidence,
@@ -45,6 +48,13 @@ def _analysis_view(a) -> dict:
         "estimated_input_tokens": a.estimated_input_tokens,
         "word_count": a.word_count,
     }
+    # Phase 8: expose control-plane classification provenance when present.
+    if getattr(a, "backend", None):
+        view["backend"] = a.backend
+    if getattr(a, "fallback_used", False):
+        view["fallback_used"] = True
+        view["fallback_reason"] = a.fallback_reason
+    return view
 
 
 def _decision_view(d) -> dict:
@@ -63,7 +73,7 @@ def _decision_view(d) -> dict:
 def route_preview(req: PreviewRequest):
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(400, "prompt must not be empty")
-    analysis = analyze(req.prompt)
+    analysis = classify_prompt(req.prompt)
     try:
         decision = route(analysis, get_registry().enabled())
     except NoCapableModel as e:
@@ -149,6 +159,20 @@ def chat(req: ChatRequest):
         "routing": _decision_view(res.routing),
         "decision_reason": res.routing.decision_reason,
         "capability_source": res.routing.capability_source,
+        # ---- Phase 8: control plane ----
+        "control_plane": res.ledger.view(),
+        "control_plane_status": res.ledger.status,
+        "control_plane_model": res.ledger.model_id,
+        "control_plane_cost_usd": res.ledger.total_cost_usd,
+        "total_cost_incl_cp_usd": round(res.total_cost_usd + res.ledger.total_cost_usd, 6),
+        "fallback_used": res.ledger.fallback_used,
+        "fallback_reason": res.ledger.fallback_reason,
+        "cache_verifier": res.cache_verifier,
+        "quality_evaluator": res.quality_evaluator,
+        "quality_checks": res.quality_checks,
+        "quality_passes": res.quality_passes,
+        "quality_failures": res.quality_failures,
+        "frontier_escalations": res.frontier_escalations,
     }
     # Persist history for analytics/benchmark (never breaks the response).
     try:
@@ -176,6 +200,12 @@ def chat(req: ChatRequest):
             "capability_source": res.routing.capability_source,
             "verification_status": res.verification_status,
             "cost_status": res.cost_status,
+            # Phase 8 control-plane accounting for analytics
+            "control_plane_cost_usd": res.ledger.total_cost_usd,
+            "control_plane_tokens": res.ledger.total_input_tokens + res.ledger.total_output_tokens,
+            "control_plane_status": res.ledger.status,
+            "total_cost_incl_cp_usd": round(res.total_cost_usd + res.ledger.total_cost_usd, 6),
+            "fallback_used": res.ledger.fallback_used,
         })
         resp["request_id"] = rid
     except Exception:

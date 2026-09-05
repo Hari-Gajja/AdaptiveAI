@@ -9,6 +9,7 @@ export const api = {
   routingStats: () => fetch('/api/routing-stats').then(j),
   models: () => fetch('/api/models').then(j),
   profiles: () => fetch('/api/models/profiles').then(j),
+  controlPlane: () => fetch('/api/models/control-plane').then(j),
   addModel: (body) =>
     fetch('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(j),
   updateModel: (id, body) =>
@@ -22,8 +23,8 @@ export const api = {
     fetch('/api/route/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) }).then(j),
   cacheStats: () => fetch('/api/cache/stats').then(j),
   benchmarkQueries: () => fetch('/api/benchmark/queries').then(j),
-  benchmarkRun: (limit, baseline_sample_n, baseline_quality_mode = 'sampled') =>
-    fetch('/api/benchmark/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: limit || 0, baseline_sample_n: baseline_sample_n || 5, baseline_quality_mode }) }).then(j),
+  benchmarkRun: (limit, baseline_sample_n, baseline_quality_mode = 'sampled', mode = 'full_optimizer') =>
+    fetch('/api/benchmark/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: limit || 0, baseline_sample_n: baseline_sample_n || 5, baseline_quality_mode, mode }) }).then(j),
   benchmarkJob: (id) => fetch(`/api/benchmark/jobs/${id}`).then(j),
   benchmarkLatest: () => fetch('/api/benchmark/latest').then(j),
 }

@@ -49,6 +49,11 @@ class TaskAnalysis:
     detected_signals: list[str]
     estimated_input_tokens: int
     word_count: int
+    # --- control-plane fields (Phase 8). Legacy analyzer leaves defaults. ---
+    backend: str = "legacy_ml"          # legacy_ml | opencode
+    fallback_used: bool = False         # LLM classifier failed -> legacy ran
+    fallback_reason: str = ""
+    control_plane: dict | None = None   # raw labels + measured token usage
 
 
 def _hits(prompt: str, words: set[str]) -> int:

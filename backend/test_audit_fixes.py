@@ -32,6 +32,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         reg_path = Path(td) / "models.json"
         reg = reset_registry_for_tests(reg_path)
+        # Hermetic: the optimizer must see the same 2-model registry this test
+        # reasons about (the live catalog has 14 models, which would change
+        # routing outcomes and make these assertions non-deterministic).
+        import backend.core.optimizer as optmod
+        optmod.get_registry = lambda: reset_registry_for_tests(reg_path)
         flash = reg.get("deepseek-v4-flash")
         pro = reg.get("deepseek-v4-pro")
         flash.input_per_1M, flash.output_per_1M = 0.01, 0.01

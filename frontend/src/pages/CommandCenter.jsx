@@ -7,13 +7,14 @@ import { api, pct, usd } from '../services/api'
 export default function CommandCenter() {
   const [a, setA] = useState(null)
   const [stats, setStats] = useState(null)
+  const [cp, setCp] = useState(null)
   const [err, setErr] = useState('')
 
   useEffect(() => {
     let alive = true
     const load = () => {
-      Promise.all([api.analytics(), api.routingStats()])
-        .then(([x, y]) => { if (alive) { setA(x); setStats(y) } })
+      Promise.all([api.analytics(), api.routingStats(), api.controlPlane().catch(() => null)])
+        .then(([x, y, z]) => { if (alive) { setA(x); setStats(y); setCp(z) } })
         .catch((e) => { if (alive) setErr(String(e)) })
     }
     load()
@@ -38,6 +39,12 @@ export default function CommandCenter() {
   ).map(([name, value]) => ({ name, value }))
   const totalReq = dist.reduce((s, d) => s + d.value, 0)
   const modelColor = (index) => ['var(--blue)', 'var(--purple)', 'var(--cyan)', 'var(--orange)'][index % 4]
+
+  const cpHealth = cp && cp.health
+  const cpStats = cp && cp.stats
+  const cpCls = cpStats && cpStats.by_kind && cpStats.by_kind.classifier
+  const cpVer = cpStats && cpStats.by_kind && cpStats.by_kind.verifier
+  const cpEval = cpStats && cpStats.by_kind && cpStats.by_kind.evaluator
 
   return (
     <div className="fade-in">
@@ -86,7 +93,7 @@ export default function CommandCenter() {
             <Flow
               nodes={[
                 { title: 'Request', sub: 'prompt + optional reusable context', icon: <Search size={14} /> },
-                { title: 'Analyze', sub: 'task type · difficulty · confidence', icon: <BrainCircuit size={14} /> },
+                { title: 'Analyze', sub: 'OpenCode classifier · legacy fallback', icon: <BrainCircuit size={14} /> },
                 { title: 'Route', sub: 'cheapest model that clears measured thresholds', icon: <GitBranch size={14} /> },
                 { title: 'Generate', sub: 'selected model answers', icon: <Gauge size={14} /> },
                 { title: 'Verify', sub: 'quality scored; escalate if below bar', icon: <CheckCircle2 size={14} />, status: 'success' },
@@ -104,6 +111,69 @@ export default function CommandCenter() {
             <p className="muted" style={{ margin: 0 }}>
               Capability scores come from our own 24-item benchmark and are labeled measured vs estimated everywhere.
             </p>
+          </Card>
+        </div>
+      </div>
+
+      <div className="grid side" style={{ marginTop: 18 }}>
+        <div className="stack">
+          <Card>
+            <CardHead title="Control plane usage" sub="OpenCode classifier · cache verifier · LLM evaluator (lifetime counters)." />
+            {!cp ? (
+              <div className="muted">Control plane status unavailable.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <Badge tone={cpHealth && cpHealth.available ? 'good' : 'warn'}>
+                    {cpHealth && cpHealth.available ? 'opencode reachable' : 'fallback active'}
+                  </Badge>
+                  <Badge>{cp.model_id}</Badge>
+                  <Badge>{cp.classifier_backend}</Badge>
+                  <Badge>quality: {cp.quality_check_mode}</Badge>
+                  <Badge>verify: {cp.cache_verify_enabled ? 'on' : 'off'}</Badge>
+                </div>
+                <div className="kpis kpis-3">
+                  <KPI label="Classifier calls" value={cpCls ? cpCls.calls : 0} sub={`${cpCls ? cpCls.failures : 0} failures`} />
+                  <KPI label="Verifier calls" value={cpVer ? cpVer.calls : 0} sub={`${cpVer ? cpVer.failures : 0} failures`} />
+                  <KPI label="Evaluator calls" value={cpEval ? cpEval.calls : 0} sub={`${cpEval ? cpEval.failures : 0} failures`} />
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Total control-plane tokens: {cpStats ? cpStats.input_tokens + cpStats.output_tokens : 0}
+                  {cpStats && cpStats.estimated_usage_calls > 0 && ' (some usage estimated chars/4)'}
+                  {cpHealth && cpHealth.last_failure ? ` · last failure: ${cpHealth.last_failure}` : ''}
+                </div>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <div className="stack">
+          <Card>
+            <CardHead title="Cost attribution" sub="Total = Control Plane + Task Model (per-request ledger)." />
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <span>Task model spend (history)</span><span className="num">{usd(opt)}</span>
+              </div>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <span>Control-plane spend</span><span className="num">tracked per request</span>
+              </div>
+              <div className="row" style={{ justifyContent: 'space-between', borderTop: '1px solid var(--line)', paddingTop: 6 }}>
+                <span><strong>Total</strong></span><span className="num"><strong>{usd(opt)} + CP</strong></span>
+              </div>
+            </div>
+            <p className="muted" style={{ margin: 0 }}>
+              Per-request control-plane cost is in the ledger: /api/chat returns control_plane_cost_usd and total_cost_incl_cp_usd; benchmark runs report control_plane_cost_usd and net_savings_pct (savings minus control-plane overhead).
+            </p>
+          </Card>
+
+          <Card>
+            <CardHead title="Explainability" sub="Why each decision was made." />
+            <div className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+              <div>• Classification backend: <strong>{cp ? cp.classifier_backend : '–'}</strong> with automatic legacy fallback on any control-plane failure.</div>
+              <div>• Cache verifier can only VETO a semantic reuse after all deterministic gates pass — it can never approve a blocked reuse.</div>
+              <div>• LLM evaluator only grades subjective tasks (no reference, non-math); math/logic keeps deterministic scoring.</div>
+              <div>• Every /api/chat response carries decision_reason, the control-plane ledger, cache_verifier and quality_evaluator views.</div>
+            </div>
           </Card>
         </div>
       </div>
