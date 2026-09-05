@@ -170,15 +170,15 @@ export default function CommandCenter() {
                   <CartesianGrid strokeDasharray="2 4" />
                   <XAxis type="number" dataKey="cost" name="cost" tickFormatter={(v) => `$${v.toFixed(3)}`} axisLine={false} tickLine={false} />
                   <YAxis type="number" dataKey="quality" domain={[0, 1]} axisLine={false} tickLine={false} />
-                  <ZAxis range={[46, 46]} />
+                  <ZAxis range={[90, 90]} />
                   <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<QcTip />} />
                   <Legend />
                   {bench && bench.optimizer_quality != null && (
                     <ReferenceLine
                       y={bench.optimizer_quality}
-                      stroke="var(--good)"
+                      stroke="#059669"
                       strokeDasharray="5 4"
-                      label={{ value: `quality bar ${(bench.optimizer_quality * 100).toFixed(0)}%`, position: 'insideTopRight', fontSize: 10, fill: 'var(--muted)' }}
+                      label={{ value: `quality bar ${(bench.optimizer_quality * 100).toFixed(0)}%`, position: 'insideTopRight', fontSize: 10, fill: '#6b7280' }}
                     />
                   )}
                   {modelNames.map((model, index) => (
@@ -187,6 +187,8 @@ export default function CommandCenter() {
                       name={model}
                       data={qualityCost.filter((d) => d.model === model)}
                       fill={MODEL_COLORS[index % MODEL_COLORS.length]}
+                      stroke="#fff"
+                      strokeWidth={1.5}
                       className="qc-dot"
                       animationBegin={index * 180}
                       animationDuration={900}
