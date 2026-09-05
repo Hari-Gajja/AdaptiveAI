@@ -45,7 +45,8 @@ PROFILES_FILE = Path(os.getenv(
     str(Path(__file__).resolve().parent.parent / "data" / "profiles.json")))
 
 
-def load_profiles(path: Path = PROFILES_FILE) -> dict:
+def load_profiles(path: Path | None = None) -> dict:
+    path = PROFILES_FILE if path is None else path
     try:
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))

@@ -16,10 +16,10 @@ export default function Benchmark() {
     loadLatest()
   }, [])
 
-  const run = async (limit) => {
+  const run = async (limit, baselineQualityMode = 'sampled') => {
     setErr('')
     try {
-      const { job_id } = await api.benchmarkRun(limit, 5)
+      const { job_id } = await api.benchmarkRun(limit, 5, baselineQualityMode)
       setJob({ job_id, status: 'running', done: 0, total: limit || (info?.count ?? 50) })
       const poll = setInterval(async () => {
         const j = await api.benchmarkJob(job_id)
@@ -43,8 +43,11 @@ export default function Benchmark() {
           actions={
             <div className="row" style={{ gap: 8 }}>
               <button className="btn ghost sm" onClick={() => run(10)} disabled={job && job.status === 'running'}>Run 10 (smoke)</button>
-              <button className="btn primary" onClick={() => run(0)} disabled={job && job.status === 'running'}>
+              <button className="btn primary" onClick={() => run(0, 'sampled')} disabled={job && job.status === 'running'}>
                 {job && job.status === 'running' ? `Running ${job.done}/${job.total}` : 'Run full benchmark'}
+              </button>
+              <button className="btn ghost sm" onClick={() => run(0, 'full')} disabled={job && job.status === 'running'}>
+                Full baseline quality
               </button>
             </div>
           }
@@ -65,7 +68,8 @@ export default function Benchmark() {
         <p className="muted" style={{ margin: 0 }}>
           Methodology: optimizer runs every query live (reference-scored, costs measured). Baseline cost is counterfactual —
           measured tokens × always-best pricing, no duplicate expensive calls. Baseline quality is measured on a deterministic
-          n=5 sample. Cache is cold-started so repeated-context items measure warm-up honestly.
+          n=5 sample by default; Full baseline quality explicitly runs the baseline model for every query. Cache is cold-started
+          so repeated-context items measure warm-up honestly.
         </p>
       </Card>
 
@@ -73,12 +77,22 @@ export default function Benchmark() {
         <div style={{ marginTop: 18 }}>
           <div className="kpis">
             <KPI label="Queries" value={latest.queries_tested} sub="reference-scored" />
-            <KPI label="Always-best" value={usd(latest.baseline_cost)} sub={latest.baseline_model} />
+            <KPI label="Always-best" value={usd(latest.baseline_cost)} sub={`${latest.baseline_model} · ${latest.baseline_quality_mode || 'sampled'} quality`} />
             <KPI label="Optimizer" value={usd(latest.optimizer_cost)} sub={`saved ${usd(latest.savings)} (${pct(latest.savings_pct)})`} tone="up" />
-            <KPI label="Quality" value={`${(latest.optimizer_quality * 100).toFixed(1)}%`} sub={`baseline ${(latest.baseline_quality * 100).toFixed(1)}% · retained ${latest.quality_retention ? (latest.quality_retention * 100).toFixed(1) + '%' : '–'}`} />
+            <KPI label="Quality" value={`${(latest.optimizer_quality * 100).toFixed(1)}%`} sub={`baseline ${latest.baseline_quality != null ? (latest.baseline_quality * 100).toFixed(1) + '%' : 'N/A'} · retained ${latest.quality_retention != null ? (latest.quality_retention * 100).toFixed(1) + '%' : 'N/A'}`} />
             <KPI label="Cache hits" value={`${(latest.cache_hit_rate * 100).toFixed(0)}%`} sub="exact + context" />
-            <KPI label="Escalations" value={`${(latest.escalation_rate * 100).toFixed(0)}%`} sub={`avg ${latest.avg_latency_ms} ms`} />
+            <KPI label="Escalations" value={`${(latest.escalation_rate * 100).toFixed(0)}%`} sub={`${latest.escalation_count ?? Math.round(latest.escalation_rate * latest.queries_tested)} · avg ${latest.avg_latency_ms} ms`} />
           </div>
+
+          <Card style={{ marginTop: 18 }}>
+            <CardHead title="Validation metrics" sub="All values come from the stored benchmark run; unavailable values remain explicit." />
+            <div className="kpis">
+              <KPI label="Successful" value={latest.successful_requests ?? latest.queries_tested} sub={`${latest.failed_requests ?? 0} failed`} />
+              <KPI label="Exact cache" value={latest.exact_cache_hits ?? 0} sub={`${latest.measured_tokens_avoided ?? 0} measured tokens avoided`} />
+              <KPI label="Context cache" value={latest.context_cache_hits ?? 0} sub={`${latest.estimated_tokens_avoided ?? 0} estimated tokens avoided`} />
+              <KPI label="Median latency" value={latest.median_latency_ms != null ? `${latest.median_latency_ms} ms` : 'N/A'} sub="successful requests" />
+            </div>
+          </Card>
 
           <div className="grid two" style={{ marginTop: 18 }}>
             <Card>
@@ -89,7 +103,7 @@ export default function Benchmark() {
               <CardHead title="Quality guardrail" sub="Cost savings that survive verification." />
               <div className="row" style={{ gap: 8, marginBottom: 12 }}>
                 <Badge tone="good">{(latest.optimizer_quality * 100).toFixed(1)}% optimizer</Badge>
-                <Badge>{(latest.baseline_quality * 100).toFixed(1)}% baseline</Badge>
+                <Badge>{latest.baseline_quality != null ? `${(latest.baseline_quality * 100).toFixed(1)}% baseline` : 'N/A baseline quality'}</Badge>
                 {latest.quality_retention != null && (
                   <Badge tone={latest.quality_retention >= 0.97 ? 'good' : 'warn'}>{(latest.quality_retention * 100).toFixed(1)}% retained</Badge>
                 )}
@@ -127,16 +141,17 @@ export default function Benchmark() {
             <div className="tbl-wrap" style={{ maxHeight: 420, overflow: 'auto' }}>
               <table className="tbl">
                 <thead>
-                  <tr><th>#</th><th>Category</th><th>Selected → final</th><th>Quality</th><th>Cost</th><th>Flags</th></tr>
+                  <tr><th>#</th><th>Category</th><th>Selected → final</th><th>Quality</th><th>Cost</th><th>Tokens</th><th>Flags</th></tr>
                 </thead>
                 <tbody>
                   {shown.map((q) => (
                     <tr key={q.id}>
                       <td className="num">{q.id}</td>
                       <td>{q.category}</td>
-                      <td><span className="muted">{q.selected_model}</span> → <b>{q.final_model}</b></td>
-                      <td className="num">{q.quality} <span className="muted" style={{ fontSize: 11 }}>({q.quality_method})</span></td>
-                      <td className="num">{usd(q.actual_cost)}</td>
+                      <td>{q.status === 'failed' ? <Badge tone="bad">failed</Badge> : <><span className="muted">{q.selected_model}</span> → <b>{q.final_model}</b></>}</td>
+                      <td className="num">{q.quality ?? 'N/A'} {q.quality_method && <span className="muted" style={{ fontSize: 11 }}>({q.quality_method})</span>}</td>
+                      <td className="num">{q.actual_cost != null ? usd(q.actual_cost) : 'N/A'}</td>
+                      <td className="num">{q.input_tokens != null ? `${q.input_tokens} in / ${q.output_tokens} out` : 'N/A'}</td>
                       <td>
                         {q.escalated ? <Badge tone="warn" style={{ marginRight: 6 }}>escalated</Badge> : null}
                         {q.cache_kind !== 'miss' ? <Badge tone="good">{q.cache_kind}</Badge> : null}

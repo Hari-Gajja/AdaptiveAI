@@ -57,6 +57,7 @@ class ModelEntry(BaseModel):
     cached_per_1M: float = Field(default=0.0, ge=0.0)
     context_window: int = Field(default=DEFAULT_CONTEXT, gt=0)
     profile_status: str = "unprofiled"  # unprofiled|profiling|profiled|stale
+    pricing_status: str = "configured"  # configured|unavailable
     created_at: str = ""
     updated_at: str = ""
 
@@ -73,6 +74,13 @@ class ModelEntry(BaseModel):
     def _valid_status(cls, v: str) -> str:
         if v not in ("unprofiled", "profiling", "profiled", "stale"):
             raise ValueError("bad profile_status")
+        return v
+
+    @field_validator("pricing_status")
+    @classmethod
+    def _valid_pricing_status(cls, v: str) -> str:
+        if v not in ("configured", "unavailable"):
+            raise ValueError("bad pricing_status")
         return v
 
 
@@ -118,7 +126,7 @@ def _defaults_for(model_id: str) -> tuple[float, float, float, int]:
 def public_view(entry: ModelEntry) -> dict:
     d = entry.model_dump()
     d["endpoint_family"] = endpoint_family(entry.model_id)
-    d["priced"] = entry.model_id in MODEL_PRICING
+    d["priced"] = entry.pricing_status == "configured"
     return d
 
 
@@ -195,8 +203,13 @@ class ModelRegistry:
                 output_per_1M=body.output_per_1M if body.output_per_1M is not None else outp,
                 cached_per_1M=body.cached_per_1M if body.cached_per_1M is not None else cached,
                 context_window=body.context_window or ctx,
+                pricing_status=("configured" if (body.input_per_1M if body.input_per_1M is not None else inp) > 0
+                                and (body.output_per_1M if body.output_per_1M is not None else outp) > 0
+                                else "unavailable"),
                 created_at=_now(), updated_at=_now(),
             )
+            if entry.enabled and entry.pricing_status == "unavailable":
+                raise RegistryError("pricing unavailable — configure pricing before enabling cost optimization", 400)
             self._models[entry.model_id] = entry
             self._save_locked()
             return entry
@@ -206,6 +219,8 @@ class ModelRegistry:
             entry = self.get(model_id)
             data = entry.model_dump()
             changes = patch.model_dump(exclude_unset=True)
+            if changes.get("enabled") is True and entry.pricing_status == "unavailable":
+                raise RegistryError("pricing unavailable — configure pricing before enabling cost optimization", 400)
             if changes.get("enabled") is False:
                 others = [m for m in self._models.values()
                           if m.model_id != model_id and m.enabled]
@@ -214,6 +229,9 @@ class ModelRegistry:
             for k, v in changes.items():
                 if v is not None:
                     data[k] = v
+            if "input_per_1M" in changes or "output_per_1M" in changes:
+                data["pricing_status"] = ("configured" if data["input_per_1M"] > 0 and data["output_per_1M"] > 0
+                                            else "unavailable")
             data["updated_at"] = _now()
             updated = ModelEntry(**data)
             self._models[model_id] = updated

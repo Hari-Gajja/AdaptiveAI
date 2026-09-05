@@ -51,16 +51,21 @@ def profile_model(model_id: str, tests: list[dict], _generate=None) -> dict:
             if v and c in CATEGORIES}
 
 
-def _save_profiles(new: dict[str, dict]) -> dict:
+def _save_profiles(new: dict[str, dict], tests: list[dict] | None = None) -> dict:
     PROFILES_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
         current = json.loads(PROFILES_FILE.read_text(encoding="utf-8"))
     except Exception:
         current = {}
+    tests = tests or load_tests()
+    category_counts: dict[str, int] = {}
+    for test in tests:
+        category_counts[test["category"]] = category_counts.get(test["category"], 0) + 1
     for mid, scores in new.items():
         entry = dict(scores)
         entry["measured_at"] = _now()
-        entry["n"] = sum(1 for _ in load_tests())
+        entry["n"] = len(tests)
+        entry["category_test_counts"] = category_counts
         current[mid] = entry
     tmp = PROFILES_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(current, indent=2), encoding="utf-8")
@@ -87,7 +92,7 @@ def _run_job(job_id: str, model_ids: list[str]) -> None:
             done += len(tests)
             with _jobs_lock:
                 _jobs[job_id]["done"] = done
-        _save_profiles(results)
+        _save_profiles(results, tests)
         with _jobs_lock:
             _jobs[job_id].update({"status": "done", "done": total,
                                   "results": results})

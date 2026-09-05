@@ -10,6 +10,7 @@ Exit 0 = both models returned text + usage. Anything else prints the fix.
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -24,6 +25,9 @@ def est_cost(model_id: str, inp: int, out: int) -> float:
 
 
 def main() -> int:
+    if os.getenv("RUN_REAL_MODEL_TESTS", "false").lower() != "true":
+        print("SKIP: set RUN_REAL_MODEL_TESTS=true to call OpenCode Go.")
+        return 0
     print("== Phase 1: two-model provider check ==")
     print(f"Model A: {settings.model_a} [{endpoint_family(settings.model_a)}]")
     print(f"Model B: {settings.model_b} [{endpoint_family(settings.model_b)}]")

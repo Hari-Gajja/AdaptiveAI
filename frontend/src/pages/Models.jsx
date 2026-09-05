@@ -116,8 +116,8 @@ export default function Models() {
                               {p && p.measured ? 'measured' : 'estimated'}
                             </Badge>
                           </td>
-                          <td className="num">${m.input_per_1M}</td>
-                          <td className="num">${m.output_per_1M}</td>
+                          <td className="num">{m.pricing_status === 'unavailable' ? 'N/A' : `$${m.input_per_1M}`}</td>
+                          <td className="num">{m.pricing_status === 'unavailable' ? 'N/A' : `$${m.output_per_1M}`}</td>
                           {CATS.map((c) => (
                             <td key={`${m.model_id}-${c}`} className="num">{p && p.capabilities[c] != null ? p.capabilities[c].toFixed(2) : '–'}</td>
                           ))}

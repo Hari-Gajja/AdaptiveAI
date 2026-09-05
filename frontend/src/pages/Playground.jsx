@@ -98,9 +98,10 @@ export default function Playground() {
           <Card style={{ marginTop: 18 }} className="fade-in">
             <CardHead
               title={`Answer · ${res.final_model}`}
-              sub={`quality ${res.quality_score} (${res.quality_method}) · cost ${usd(res.actual_cost_usd)} · baseline ${usd(res.baseline_cost_usd)} · saved ${res.savings_pct}% · ${res.latency_ms} ms`}
+              sub={`${res.verification_status} · quality ${res.quality_score ?? 'N/A'} (${res.quality_method}/${res.quality_detail || 'unspecified'}) · cost ${res.cost_status === 'measured' ? usd(res.actual_cost_usd) : 'N/A'} · baseline ${usd(res.baseline_cost_usd)} · saved ${res.savings_status === 'measured' ? `${res.savings_pct}%` : 'N/A'} · ${res.latency_ms} ms`}
               actions={
                 <div className="row" style={{ gap: 6 }}>
+                  {res.verification_status !== 'verified' && res.verification_status !== 'escalated_and_verified' && <Badge tone="warn">{res.verification_status}</Badge>}
                   {res.escalated && <Badge tone="warn">escalated</Badge>}
                   {res.cache_hit && <Badge tone="good">{res.cache_kind} hit</Badge>}
                 </div>

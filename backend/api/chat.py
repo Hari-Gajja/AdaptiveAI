@@ -96,12 +96,14 @@ def chat(req: ChatRequest):
         quality_score, quality_method, quality_breakdown = None, "cached", {
             "correctness": None, "relevance": None, "completeness": None}
     else:
-        quality_score, quality_method = final.quality.overall, final.quality.method
+        quality_score = final.quality.overall if final.quality else None
+        quality_method = final.quality.method if final.quality else "unavailable"
         quality_breakdown = {
-            "correctness": final.quality.correctness,
-            "relevance": final.quality.relevance,
-            "completeness": final.quality.completeness,
+            "correctness": final.quality.correctness if final.quality else None,
+            "relevance": final.quality.relevance if final.quality else None,
+            "completeness": final.quality.completeness if final.quality else None,
         }
+    quality_detail = final.quality.scoring_detail if final and final.quality else "cached" if final is None else "unavailable"
     resp = {
         "answer": res.answer,
         "task_type": res.analysis.task_type,
@@ -120,20 +122,28 @@ def chat(req: ChatRequest):
         "output_tokens": sum(a.output_tokens for a in res.attempts),
         "quality_score": quality_score,
         "quality_method": quality_method,
+        "quality_detail": quality_detail,
         "quality_breakdown": quality_breakdown,
         "quality_threshold": settings.quality_threshold,
+        "quality_passed": res.quality_passed,
+        "verification_status": res.verification_status,
+        "max_attempts_reached": res.max_attempts_reached,
         "escalated": res.escalated,
         "attempts": [
-            {"model_id": a.model_id, "quality": a.quality.overall,
-             "method": a.quality.method, "passed": a.passed,
+            {"model_id": a.model_id, "quality": a.quality.overall if a.quality else None,
+             "method": a.quality.method if a.quality else "unavailable",
+             "scoring_detail": a.quality.scoring_detail if a.quality else "unavailable", "passed": a.passed,
              "cost_usd": a.cost_usd, "latency_ms": a.latency_ms}
             for a in res.attempts
         ],
         "actual_cost_usd": res.total_cost_usd,  # SUM over attempts (honest spend)
+        "cost_status": res.cost_status,
         "baseline_model": res.baseline_model,  # counterfactual always-best
+        "baseline_method": res.baseline_method,
         "baseline_cost_usd": res.baseline_cost_usd,
         "savings_usd": res.savings_usd,
         "savings_pct": res.savings_pct,
+        "savings_status": res.savings_status,
         "latency_ms": res.total_latency_ms,
         "analysis": _analysis_view(res.analysis),
         "routing": _decision_view(res.routing),
@@ -154,8 +164,8 @@ def chat(req: ChatRequest):
             "final_model": res.final_model,
             "cache_hit": res.cache_hit,
             "cache_kind": res.cache_kind,
-            "input_tokens": sum(a.input_tokens for a in res.attempts),
-            "output_tokens": sum(a.output_tokens for a in res.attempts),
+            "input_tokens": sum(a.input_tokens for a in res.attempts) if all(a.input_tokens is not None for a in res.attempts) else None,
+            "output_tokens": sum(a.output_tokens for a in res.attempts) if all(a.output_tokens is not None for a in res.attempts) else None,
             "actual_cost_usd": res.total_cost_usd,
             "baseline_model": res.baseline_model,
             "baseline_cost_usd": res.baseline_cost_usd,
@@ -164,6 +174,8 @@ def chat(req: ChatRequest):
             "escalated": res.escalated,
             "latency_ms": res.total_latency_ms,
             "capability_source": res.routing.capability_source,
+            "verification_status": res.verification_status,
+            "cost_status": res.cost_status,
         })
         resp["request_id"] = rid
     except Exception:

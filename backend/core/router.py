@@ -57,8 +57,10 @@ def _expected_quality(caps: dict[str, float], analysis: TaskAnalysis) -> tuple[f
 
 
 def route(analysis: TaskAnalysis, enabled_models: list[ModelEntry]) -> RoutingDecision:
+    enabled_models = [m for m in enabled_models
+                      if m.input_per_1M > 0 and m.output_per_1M > 0]
     if not enabled_models:
-        raise NoCapableModel("no enabled models in registry")
+        raise NoCapableModel("no enabled models with configured pricing in registry")
     reasons: list[str] = [
         f"Task classified as {analysis.task_type} "
         f"(difficulty={analysis.difficulty_score}, confidence={analysis.confidence})",

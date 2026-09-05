@@ -22,8 +22,8 @@ export const api = {
     fetch('/api/route/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) }).then(j),
   cacheStats: () => fetch('/api/cache/stats').then(j),
   benchmarkQueries: () => fetch('/api/benchmark/queries').then(j),
-  benchmarkRun: (limit, baseline_sample_n) =>
-    fetch('/api/benchmark/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: limit || 0, baseline_sample_n: baseline_sample_n || 5 }) }).then(j),
+  benchmarkRun: (limit, baseline_sample_n, baseline_quality_mode = 'sampled') =>
+    fetch('/api/benchmark/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: limit || 0, baseline_sample_n: baseline_sample_n || 5, baseline_quality_mode }) }).then(j),
   benchmarkJob: (id) => fetch(`/api/benchmark/jobs/${id}`).then(j),
   benchmarkLatest: () => fetch('/api/benchmark/latest').then(j),
 }

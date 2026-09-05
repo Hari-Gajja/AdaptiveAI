@@ -33,11 +33,17 @@ class GenerateResult:
     model_id: str
     endpoint: str
     endpoint_family: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cached_tokens: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_tokens: int | None = None
     latency_ms: int = 0
     raw_usage: dict = field(default_factory=dict)
+
+
+def _usage_int(usage: dict, key: str) -> int | None:
+    """Return a reported token count without converting missing usage to zero."""
+    value = usage.get(key)
+    return int(value) if isinstance(value, (int, float)) and value >= 0 else None
 
 
 def _headers() -> dict[str, str]:
@@ -142,9 +148,9 @@ def _generate_chat_completions(
         model_id=model_id,
         endpoint=url,
         endpoint_family="chat_completions",
-        input_tokens=int(usage.get("prompt_tokens", 0) or 0),
-        output_tokens=int(usage.get("completion_tokens", 0) or 0),
-        cached_tokens=int(details.get("cached_tokens", 0) or 0),
+        input_tokens=_usage_int(usage, "prompt_tokens"),
+        output_tokens=_usage_int(usage, "completion_tokens"),
+        cached_tokens=_usage_int(details, "cached_tokens"),
         latency_ms=latency,
         raw_usage=usage,
     )
@@ -185,9 +191,9 @@ def _generate_responses(
         model_id=model_id,
         endpoint=url,
         endpoint_family="responses",
-        input_tokens=int(usage.get("input_tokens", 0) or 0),
-        output_tokens=int(usage.get("output_tokens", 0) or 0),
-        cached_tokens=int(usage.get("cached_tokens", 0) or 0),
+        input_tokens=_usage_int(usage, "input_tokens"),
+        output_tokens=_usage_int(usage, "output_tokens"),
+        cached_tokens=_usage_int(usage, "cached_tokens"),
         latency_ms=latency,
         raw_usage=usage,
     )
@@ -224,9 +230,9 @@ def _generate_messages(
         model_id=model_id,
         endpoint=url,
         endpoint_family="messages",
-        input_tokens=int(usage.get("input_tokens", 0) or 0),
-        output_tokens=int(usage.get("output_tokens", 0) or 0),
-        cached_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
+        input_tokens=_usage_int(usage, "input_tokens"),
+        output_tokens=_usage_int(usage, "output_tokens"),
+        cached_tokens=_usage_int(usage, "cache_read_input_tokens"),
         latency_ms=latency,
         raw_usage=usage,
     )

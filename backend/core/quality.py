@@ -82,12 +82,13 @@ class QualityScore:
     completeness: float
     overall: float
     method: str  # "reference" | "estimated"
+    scoring_detail: str = "lexical"
 
 
-def _combine(c: float, r: float, m: float, method: str) -> QualityScore:
+def _combine(c: float, r: float, m: float, method: str, scoring_detail: str = "lexical") -> QualityScore:
     overall = round(0.5 * c + 0.3 * r + 0.2 * m, 3)
     return QualityScore(correctness=c, relevance=r, completeness=m,
-                        overall=overall, method=method)
+                        overall=overall, method=method, scoring_detail=scoring_detail)
 
 
 def evaluate(answer: str, prompt: str, reference: str | None = None) -> QualityScore:
@@ -98,7 +99,7 @@ def evaluate(answer: str, prompt: str, reference: str | None = None) -> QualityS
     low = answer.lower()
     if any(p in low for p in REFUSAL_PHRASES):
         # Refusal: relevant-ish (it responds) but not correct/complete.
-        return _combine(0.2, 0.4, 0.1, "reference" if reference else "estimated")
+        return _combine(0.2, 0.4, 0.1, "reference" if reference else "estimated", "refusal")
 
     a_toks = content_tokens(answer)
     p_toks = content_tokens(prompt)
@@ -107,10 +108,17 @@ def evaluate(answer: str, prompt: str, reference: str | None = None) -> QualityS
         # correctness blends precision-oriented F1 with recall so short
         # factoid references ("30") still score when the answer contains them.
         correctness = round((_f1(a_toks, r_toks) + _recall(r_toks, a_toks)) / 2, 3)
+        detail = "reference_lexical"
+        math_prompt = any(word in prompt.lower() for word in ("calculate", "solve", "equation", "percent", "%", "how many"))
+        reference_numbers = set(re.findall(r"\d+(?:\.\d+)?", reference))
+        answer_numbers = set(re.findall(r"\d+(?:\.\d+)?", answer))
+        if math_prompt and reference_numbers and reference_numbers == answer_numbers:
+            correctness = max(correctness, 0.85)
+            detail = "reference_math_numeric"
         relevance = _recall(p_toks, a_toks)
         length_ratio = min(1.0, len(a_toks) / max(1, len(r_toks)))
         completeness = round((_recall(r_toks, a_toks) + length_ratio) / 2, 3)
-        return _combine(correctness, relevance, completeness, "reference")
+        return _combine(correctness, relevance, completeness, "reference", detail)
 
     # ---- estimated: no ground truth, heuristic signals only ----
     uniq_ratio = len(set(a_toks)) / max(1, len(a_toks))
@@ -120,4 +128,4 @@ def evaluate(answer: str, prompt: str, reference: str | None = None) -> QualityS
     relevance = _recall(p_toks, a_toks)
     completeness = min(1.0, len(a_toks) / max(10, len(p_toks)))
     completeness = round(completeness, 3)
-    return _combine(correctness, relevance, completeness, "estimated")
+    return _combine(correctness, relevance, completeness, "estimated", "estimated_heuristic")

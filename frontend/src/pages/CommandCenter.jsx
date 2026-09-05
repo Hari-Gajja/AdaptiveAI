@@ -52,19 +52,17 @@ export default function CommandCenter() {
   if (err) return <Err>{err}</Err>
   if (!a) return <SkeletonKPIs n={4} />
 
-  const src = bench || a
+  const src = a
   const base = src.baseline_cost_usd ?? src.baseline_cost
   const opt = src.optimizer_cost ?? src.total_cost_usd
   const savings = src.savings ?? src.savings_usd
   const savingsPct = src.savings_pct ?? (base ? (100 * (base - opt)) / base : 0)
-  const cacheRate = ((bench ? bench.cache_hit_rate : a.cache_hit_rate) || 0)
-  const escRate = ((bench ? bench.escalation_rate : a.escalation_rate) || 0)
-  const quality = bench
-    ? { opt: bench.optimizer_quality, base: bench.baseline_quality, kept: bench.quality_retention }
-    : { opt: a.avg_quality, base: null, kept: null }
+  const cacheRate = a.cache_hit_rate || 0
+  const escRate = a.escalation_rate || 0
+  const quality = { opt: a.avg_quality, base: null, kept: null }
 
   const dist = Object.entries(
-    bench ? (bench.model_distribution || {}) : ((stats && stats.by_model) || {}),
+    (stats && stats.by_model) || {},
   ).map(([name, value]) => ({ name, value }))
   const totalReq = dist.reduce((s, d) => s + d.value, 0)
 
@@ -90,16 +88,16 @@ export default function CommandCenter() {
         <KPI label="Cost saved" value={usd(savings)} sub={`${pct(savingsPct.toFixed ? savingsPct.toFixed(1) : savingsPct)} vs always-best`} tone="up" />
         <KPI label="Quality" value={quality.opt != null ? `${(quality.opt * 100).toFixed(1)}%` : '–'} sub={quality.kept != null ? `${(quality.kept * 100).toFixed(1)}% of baseline ${quality.base != null ? (quality.base * 100).toFixed(1) + '%' : ''}` : 'live average'} />
         <KPI label="Cache hit rate" value={`${(cacheRate * 100).toFixed(0)}%`} sub="exact + reusable-context hits" />
-        <KPI label="Requests" value={bench ? bench.queries_tested : a.total_requests} sub={bench ? 'benchmark queries' : `store mode: ${a.mode}`} />
-        <KPI label="Escalations" value={`${(escRate * 100).toFixed(0)}%`} sub={bench ? `avg latency ${bench.avg_latency_ms} ms` : 'quality-triggered retries'} />
+        <KPI label="Requests" value={a.total_requests} sub={`LIVE · store mode: ${a.mode}`} />
+        <KPI label="Escalations" value={`${(escRate * 100).toFixed(0)}%`} sub="LIVE · quality/provider retries" />
       </div>
 
       <div className="grid side" style={{ marginTop: 18 }}>
         <div>
           <Card>
             <CardHead
-              title="Cost: always-best vs optimizer"
-              sub="Baseline is counterfactual (measured tokens × best-model pricing) — no duplicate expensive calls."
+              title="LIVE cost: optimizer vs baseline"
+              sub="Current request history. Baseline is counterfactual; benchmark results are shown in Benchmark Lab."
             />
             <CostCompare baseline={base} optimizer={opt} savings={savings} savingsPct={savingsPct} />
           </Card>

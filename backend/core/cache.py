@@ -28,8 +28,10 @@ def _key(prefix: str, text: str) -> str:
     return prefix + hashlib.sha256(normalize(text).encode("utf-8")).hexdigest()
 
 
-def exact_key(prompt: str) -> str:
-    return _key("exact:", prompt)
+def exact_key(prompt: str, context: str | None = None) -> str:
+    """Key an answer by both prompt and context when context is supplied."""
+    normalized_context = normalize(context or "")
+    return _key("exact:", f"{normalize(prompt)}\ncontext:{normalized_context}")
 
 
 def context_key(context: str) -> str:
@@ -44,7 +46,7 @@ class CacheEntry:
     model_id: str
     input_tokens: int
     output_tokens: int
-    cost_usd: float
+    cost_usd: float | None
     context_tokens: int
 
 
@@ -62,11 +64,11 @@ class PromptCache:
         self.context_saved_estimated = 0.0
 
     # ---- lookups ----
-    def get_exact(self, prompt: str) -> CacheEntry | None:
+    def get_exact(self, prompt: str, context: str | None = None) -> CacheEntry | None:
         with self._lock:
-            e = self._exact.get(exact_key(prompt))
+            e = self._exact.get(exact_key(prompt, context))
             if e is not None:
-                self._exact.move_to_end(exact_key(prompt))
+                self._exact.move_to_end(exact_key(prompt, context))
             return e
 
     def get_context(self, context: str) -> CacheEntry | None:
@@ -78,13 +80,13 @@ class PromptCache:
                 self._ctx.move_to_end(context_key(context))
             return e
 
-    def contains(self, prompt: str) -> bool:
-        return self.get_exact(prompt) is not None
+    def contains(self, prompt: str, context: str | None = None) -> bool:
+        return self.get_exact(prompt, context) is not None
 
     # ---- writes ----
     def put(self, entry: CacheEntry) -> None:
         with self._lock:
-            self._exact[exact_key(entry.prompt)] = entry
+            self._exact[exact_key(entry.prompt, entry.context)] = entry
             while len(self._exact) > self._max:
                 self._exact.popitem(last=False)
             if entry.context.strip():
@@ -97,7 +99,8 @@ class PromptCache:
         with self._lock:
             self.exact_hits += 1
             self.tokens_avoided += entry.input_tokens + entry.output_tokens
-            self.exact_saved_measured += entry.cost_usd
+            if entry.cost_usd is not None:
+                self.exact_saved_measured += entry.cost_usd
 
     def note_context_hit(self, context_tokens: int, input_price_per_1M: float) -> None:
         with self._lock:

@@ -13,6 +13,7 @@ router = APIRouter(prefix="/api/benchmark", tags=["benchmark"])
 class BenchmarkStart(BaseModel):
     limit: int = 0  # 0 = all queries
     baseline_sample_n: int = 5
+    baseline_quality_mode: str = "sampled"  # sampled | full
 
 
 @router.get("/queries")
@@ -30,9 +31,12 @@ def benchmark_run(body: BenchmarkStart):
     total = len(load_queries())
     if body.limit < 0 or body.limit > total:
         raise HTTPException(400, f"limit must be 0..{total}")
-    return {"job_id": start_job(body.limit, body.baseline_sample_n),
+    if body.baseline_quality_mode not in ("sampled", "full"):
+        raise HTTPException(400, "baseline_quality_mode must be sampled or full")
+    return {"job_id": start_job(body.limit, body.baseline_sample_n, body.baseline_quality_mode),
             "queries": body.limit or total,
-            "baseline_sample_n": body.baseline_sample_n}
+            "baseline_sample_n": body.baseline_sample_n,
+            "baseline_quality_mode": body.baseline_quality_mode}
 
 
 @router.get("/jobs/{job_id}")
