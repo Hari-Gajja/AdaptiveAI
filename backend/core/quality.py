@@ -112,7 +112,9 @@ def evaluate(answer: str, prompt: str, reference: str | None = None) -> QualityS
         math_prompt = any(word in prompt.lower() for word in ("calculate", "solve", "equation", "percent", "%", "how many"))
         reference_numbers = set(re.findall(r"\d+(?:\.\d+)?", reference))
         answer_numbers = set(re.findall(r"\d+(?:\.\d+)?", answer))
-        if math_prompt and reference_numbers and reference_numbers == answer_numbers:
+        if math_prompt and reference_numbers and reference_numbers.issubset(answer_numbers):
+            # Subset (not equality): answers often restate the problem
+            # ("15% of 200 = 30") and legitimately contain extra numbers.
             correctness = max(correctness, 0.85)
             detail = "reference_math_numeric"
         relevance = _recall(p_toks, a_toks)

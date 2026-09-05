@@ -124,6 +124,7 @@ export default function Benchmark() {
             <div className="kpis">
               <KPI label="Successful" value={latest.successful_requests ?? latest.queries_tested} sub={`${latest.failed_requests ?? 0} failed`} />
               <KPI label="Exact cache" value={latest.exact_cache_hits ?? 0} sub={`${latest.measured_tokens_avoided ?? 0} measured tokens avoided`} />
+              <KPI label="Semantic cache" value={latest.semantic_cache_hits ?? 0} sub="gate-safe similar prompts" />
               <KPI label="Context cache" value={latest.context_cache_hits ?? 0} sub={`${latest.estimated_tokens_avoided ?? 0} estimated tokens avoided`} />
               <KPI label="Median latency" value={latest.median_latency_ms != null ? `${latest.median_latency_ms} ms` : 'N/A'} sub="successful requests" />
             </div>

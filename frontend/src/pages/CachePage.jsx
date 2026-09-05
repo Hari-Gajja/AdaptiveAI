@@ -23,11 +23,12 @@ export default function CachePage() {
   return (
     <div className="fade-in">
       <div className="kpis">
-        <KPI label="Cache hit rate" value={`${(stats.hit_rate * 100).toFixed(0)}%`} sub={`${stats.exact_hits + stats.context_hits} hits of ${stats.requests}`} />
+        <KPI label="Cache hit rate" value={`${(stats.hit_rate * 100).toFixed(0)}%`} sub={`${stats.exact_hits + stats.semantic_hits + stats.context_hits} hits of ${stats.requests}`} />
         <KPI label="Tokens avoided" value={stats.tokens_avoided.toLocaleString()} sub="input + output" />
         <KPI label="Exact hits" value={stats.exact_hits} sub={`measured savings ${usd(stats.exact_saved_measured_usd)}`} />
+        <KPI label="Semantic hits" value={stats.semantic_hits} sub={`gate-safe reuse · ${usd(stats.semantic_saved_measured_usd)}`} />
         <KPI label="Context hits" value={stats.context_hits} sub={`estimated savings ${usd(stats.context_saved_estimated_usd)}`} />
-        <KPI label="Entries" value={stats.entries} sub="cached responses + contexts" />
+        <KPI label="Entries" value={stats.entries} sub={`${stats.backend || 'memory'} backend · ${stats.semantic_vetoes || 0} gate vetoes`} />
       </div>
 
       <Card className="cache-hero" style={{ marginTop: 18 }}>
@@ -38,7 +39,7 @@ export default function CachePage() {
           <div className="section-title">Cache performance</div>
           <h2 className="cache-title">Reuse context. Skip repeat work.</h2>
           <p className="muted">Exact hits skip generation entirely. Context hits keep the question fresh while measuring avoided reusable tokens as estimated savings.</p>
-          <div className="row"><Badge tone="good">{stats.exact_hits} exact hits</Badge><Badge tone="blue">{stats.context_hits} context hits</Badge><Badge>{stats.misses} misses</Badge></div>
+          <div className="row"><Badge tone="good">{stats.exact_hits} exact hits</Badge><Badge tone="purple">{stats.semantic_hits} semantic hits</Badge><Badge tone="blue">{stats.context_hits} context hits</Badge><Badge>{stats.misses} misses</Badge></div>
         </div>
       </Card>
 

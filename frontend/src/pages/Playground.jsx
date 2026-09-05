@@ -339,7 +339,7 @@ function AssistantMsg({ res, onTrace, onRegen }) {
         {cacheHit && (
           <span className="pg-cache-badge">
             <Zap size={11} />
-            {cacheKind === 'exact' ? 'Cached response' : cacheKind === 'context' ? 'Context cache hit' : 'Cached'}
+            {cacheKind === 'exact' ? 'Cached response' : cacheKind === 'semantic' ? 'Semantic cache hit' : cacheKind === 'context' ? 'Context cache hit' : 'Cached'}
           </span>
         )}
         {verified && <span className="pg-verified-badge"><CheckCircle2 size={11} />Verified</span>}

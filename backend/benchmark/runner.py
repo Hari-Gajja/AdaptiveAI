@@ -68,6 +68,7 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
     esc = 0
     cache_hits = 0
     exact_cache_hits = 0
+    semantic_cache_hits = 0
     context_cache_hits = 0
     cache_misses = 0
     measured_tokens_avoided = 0
@@ -113,6 +114,7 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
         esc += 1 if res.escalated else 0
         cache_hits += 1 if res.cache_hit else 0
         exact_cache_hits += 1 if res.cache_kind == "exact" else 0
+        semantic_cache_hits += 1 if res.cache_kind == "semantic" else 0
         context_cache_hits += 1 if res.cache_kind == "context" else 0
         cache_misses += 1 if res.cache_kind == "miss" else 0
         if res.cache_saved_kind == "measured":
@@ -197,6 +199,7 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
         "model_distribution": dict(model_counts),
         "cache_hit_rate": round(cache_hits / n, 3) if n else 0.0,
         "exact_cache_hits": exact_cache_hits,
+        "semantic_cache_hits": semantic_cache_hits,
         "context_cache_hits": context_cache_hits,
         "cache_misses": cache_misses,
         "measured_tokens_avoided": measured_tokens_avoided,

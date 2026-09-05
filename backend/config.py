@@ -21,6 +21,20 @@ MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 DATABASE_NAME: str = os.getenv("DATABASE_NAME", "llm_optimizer")
 QUALITY_THRESHOLD: float = float(os.getenv("QUALITY_THRESHOLD", "0.75"))
 
+# --- Cache backend (Phase 7) ---
+# REDIS_URL: real Redis when reachable (docker run -p 6379:6379 redis:7-alpine).
+# Unreachable -> transparent in-memory fallback with the SAME redis-py API
+# (fakeredis), so the demo never breaks and the code path is identical.
+REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+# Semantic tier: cosine similarity >= SEMANTIC_THRESHOLD counts as a candidate
+# hit; safety gates then decide. 0.50 because char-3gram cosine scores safe
+# paraphrases ("Calculate 15% of 200" vs "What is 15 percent of 200?") at ~0.55
+# while unsafe operand swaps score ~0.87 — similarity CANNOT separate them.
+# The GATES are the safety mechanism (exact salient-word/number/operator
+# equality); the threshold only pre-filters. 0 disables the tier.
+SEMANTIC_THRESHOLD: float = float(os.getenv("SEMANTIC_THRESHOLD", "0.50"))
+SEMANTIC_MAX_ENTRIES: int = int(os.getenv("SEMANTIC_MAX_ENTRIES", "256"))
+
 # Pricing: USD per 1M tokens, off-peak where DeepSeek publishes peak/off-peak.
 # Source: https://opencode.ai/docs/go (Sep 2026). Update here if docs change —
 # the router and cost engine read ONLY from this table, never hard-coded values.
@@ -99,6 +113,8 @@ class Settings:
     model_a: str = MODEL_A_ID
     model_b: str = MODEL_B_ID
     quality_threshold: float = QUALITY_THRESHOLD
+    redis_url: str = REDIS_URL
+    semantic_threshold: float = SEMANTIC_THRESHOLD
     configured_models: list[str] = field(
         default_factory=lambda: [MODEL_A_ID, MODEL_B_ID]
     )

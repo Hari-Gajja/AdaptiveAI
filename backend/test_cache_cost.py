@@ -17,8 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import backend.core.optimizer as optmod
 import backend.core.registry as regmod
-from backend.core.cache import PromptCache, context_key, exact_key
+from backend.core.cache import PromptCache, context_key, exact_key, reset_cache_for_tests
 from backend.core.cost import baseline_model, cost_summary
+from backend.core.semantic import (canonicalize, check_gates, extract_features,
+                                   similarity)
 from backend.providers.opencode import GenerateResult
 
 failures = 0
@@ -51,8 +53,8 @@ def main() -> int:
           exact_key("  Hello   World ") == exact_key("hello world"))
     check("context key differs from exact", context_key("x") != exact_key("x"))
 
-    # ---- cache unit ----
-    c = PromptCache(max_entries=2)
+    # ---- cache unit (fresh in-memory redis-compatible backend) ----
+    c = reset_cache_for_tests(max_entries=2)
     check("miss returns None", c.get_exact("nope") is None)
     c.note_miss()
     from backend.core.cache import CacheEntry
@@ -70,6 +72,39 @@ def main() -> int:
     check("LRU eviction", c.get_exact("Hi") is None and c.contains("b"))
     cleared = c.clear()
     check("clear resets", cleared["cleared_entries"] >= 0 and c.statistics()["requests"] == 0)
+
+    # ---- semantic similarity + gates ----
+    check("similarity high for paraphrase",
+          similarity(canonicalize("What is 15 percent of 200?"),
+                     canonicalize("Calculate 15% of 200")) > 0.5)
+    check("similarity low for unrelated",
+          similarity("What is an API?", "Sort a list of numbers") < 0.4)
+    f_add = extract_features("What is 2 + 2?")
+    f_mul = extract_features("What is 2 * 2?")
+    check("operator gate vetoes 2+2 vs 2*2", not check_gates(f_add, f_mul).safe)
+    f_num = extract_features("What is 25% of 400?")
+    f_num2 = extract_features("What is 25% of 500?")
+    check("number gate vetoes 400 vs 500", not check_gates(f_num, f_num2).safe)
+    f_neg = extract_features("Write a function without recursion")
+    f_neg2 = extract_features("Write a function with recursion")
+    check("negation gate vetoes polarity flip", not check_gates(f_neg, f_neg2).safe)
+    f_par1 = extract_features("What is 15 percent of 200?")
+    f_par2 = extract_features("Calculate 15% of 200")
+    check("gates pass for safe paraphrase", check_gates(f_par1, f_par2).safe)
+
+    # ---- semantic tier end-to-end ----
+    c2 = reset_cache_for_tests()
+    c2.put(CacheEntry(prompt="What is 15 percent of 200?", context="",
+                      answer="30", model_id="m", input_tokens=10, output_tokens=5,
+                      cost_usd=0.0002, context_tokens=0))
+    hit, score, vetoes = c2.lookup_semantic("Calculate 15% of 200")
+    check("semantic hit for safe paraphrase", hit is not None and hit.answer == "30",
+          f"score={score} vetoes={vetoes}")
+    hit2, score2, vetoes2 = c2.lookup_semantic("What is 15% of 500?")
+    check("semantic veto on different operand", hit2 is None and len(vetoes2) > 0,
+          f"score={score2} vetoes={vetoes2}")
+    hit3, score3, vetoes3 = c2.lookup_semantic("What is 2 + 2?")
+    check("no semantic hit for unrelated", hit3 is None, f"score={score3}")
 
     # ---- cost engine ----
     with tempfile.TemporaryDirectory() as td:
@@ -123,9 +158,12 @@ def main() -> int:
                                   raw_usage={})
 
         r3 = optmod.run_prompt("How many days do I have?", context=ctx,
+                               reference="You have 30 days with receipt per the ACME return policy.",
                                _generate=policy_fake, _evaluate=evaluate)
         check("first context use is miss-kind", r3.cache_kind == "miss", r3.cache_kind)
         r4 = optmod.run_prompt("What about opened software?", context=ctx,
+                               reference=("Opened software is not refundable per the policy; "
+                                          "unopened items have 30 days with receipt."),
                                _generate=policy_fake, _evaluate=evaluate)
         check("same context new q = context hit", r4.cache_kind == "context"
               and r4.cache_hit is True, r4.cache_kind)

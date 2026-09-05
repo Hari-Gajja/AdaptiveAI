@@ -114,7 +114,7 @@ def chat(req: ChatRequest):
         "initial_model": res.initial_model,
         "final_model": res.final_model,
         "cache_hit": res.cache_hit,
-        "cache_kind": res.cache_kind,  # miss | exact | context
+        "cache_kind": res.cache_kind,  # miss | exact | semantic | context
         "tokens_avoided": res.tokens_avoided,
         "cache_saved_usd": res.cache_saved_usd,
         "cache_saved_kind": res.cache_saved_kind,  # "" | measured | estimated

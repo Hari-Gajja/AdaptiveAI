@@ -149,6 +149,34 @@ def run_prompt(
             _finish_costs_free_hit(result, enabled_list, hit)
             return result
 
+        # ---- semantic cache hit: similar prompt + ALL safety gates pass ----
+        sem_hit, sem_score, vetoes = cache.lookup_semantic(prompt, context)
+        if sem_hit is not None:
+            cache.note_semantic_hit(sem_hit, sem_score)
+            reasons.append(
+                f"Cache SEMANTIC hit (similarity {sem_score:.2f} >= {cache._sem_threshold}): "
+                f"all safety gates passed (numbers, operators, ordinals, units, directions, "
+                f"language, structures, identifiers, intent, negation, context). "
+                f"Returning stored answer from {sem_hit.model_id}, skipped LLM call "
+                f"(measured savings ${sem_hit.cost_usd:.6f}).")
+            routing.decision_reason = reasons
+            result = OptimizerResult(
+                answer=sem_hit.answer, analysis=analysis, routing=routing,
+                cache_hit=True, cache_kind="semantic",
+                tokens_avoided=sem_hit.input_tokens + sem_hit.output_tokens,
+                cache_saved_usd=sem_hit.cost_usd,
+                cache_saved_kind="measured" if sem_hit.cost_usd is not None else "unavailable")
+            _finish_costs_free_hit(result, enabled_list, sem_hit)
+            return result
+        if vetoes:
+            cache.note_semantic_veto(vetoes)
+            reasons.append(
+                f"Semantic candidate found (similarity {sem_score:.2f}) but safety gates "
+                f"VETOED reuse: {'; '.join(vetoes)}. Falling through to routing.")
+        elif sem_score > 0:
+            reasons.append(f"Semantic tier: best similarity {sem_score:.2f} "
+                           f"below threshold {cache._sem_threshold}.")
+
     # ---- context hit: reusable context seen before, new question ----
     ctx_tokens = len(context) // 4 if context else 0
     ctx_hit = cache.get_context(context) if (use_cache and context) else None
@@ -213,8 +241,8 @@ def run_prompt(
     else:
         result.verification_status = "verification_failed"
 
-    # ---- cache bookkeeping ----
-    if use_cache and result.attempts and result.answer:
+    # ---- cache bookkeeping: store ONLY validated responses (spec step 6) ----
+    if use_cache and result.quality_passed and result.answer:
         last = result.attempts[-1]
         cache.put(CacheEntry(prompt=prompt, context=context, answer=last.answer,
                              model_id=last.model_id, input_tokens=last.input_tokens,
