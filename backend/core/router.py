@@ -40,6 +40,7 @@ class RoutingDecision:
     confidence_action: str  # "normal" | "low_confidence_safety"
     capability_source: str
     decision_reason: list[str]
+    context_limit_triggered: bool = False  # §11: a model's window was too small
 
 
 def _expected_quality(caps: dict[str, float], analysis: TaskAnalysis) -> tuple[float, list[str]]:
@@ -68,17 +69,30 @@ def route(analysis: TaskAnalysis, enabled_models: list[ModelEntry]) -> RoutingDe
             f"{c}>={analysis.required_thresholds[c]:.2f}"
             for c in analysis.required_capabilities),
     ]
+    # §12: expected output tokens come from the analyzer's predicted budget
+    # (spec §3) instead of a fixed constant, so cost estimates reflect the
+    # requested/predicted answer length.
+    expected_out = analysis.estimated_output_tokens or DEFAULT_EXPECTED_OUTPUT_TOKENS
     cands: list[CandidateView] = []
+    context_limit_triggered = False
     for m in enabled_models:
         caps = capabilities_for(m.model_id)
         quality, gaps = _expected_quality(caps, analysis)
-        cost = estimate_cost_usd(m, analysis.estimated_input_tokens,
-                                 DEFAULT_EXPECTED_OUTPUT_TOKENS)
+        cost = estimate_cost_usd(m, analysis.estimated_input_tokens, expected_out)
+        # §11: a model that cannot fit prompt + expected answer is not a
+        # candidate, no matter how cheap it is.
+        need = analysis.estimated_input_tokens + expected_out
+        if need > m.context_window:
+            gaps.append(f"context window: need ~{need} tokens > {m.context_window}")
+            context_limit_triggered = True
         ok = not gaps
         cands.append(CandidateView(m.model_id, ok, quality, round(cost, 6), gaps))
         reasons.append(
             f"{m.model_id}: {'qualifies' if ok else 'rejected (' + '; '.join(gaps) + ')'}; "
             f"expected quality={quality}, expected cost=${cost:.6f}")
+    if context_limit_triggered:
+        reasons.append("Context window: at least one model rejected because "
+                       "prompt + expected answer exceeds its window.")
     qualifying = [c for c in cands if c.qualifies]
     source = overall_source([m.model_id for m in enabled_models])
     if qualifying:
@@ -92,10 +106,10 @@ def route(analysis: TaskAnalysis, enabled_models: list[ModelEntry]) -> RoutingDe
             action = "normal"
             reasons.append(f"Selected cheapest qualifying model: {pick.model_id}.")
         return RoutingDecision(pick.model_id, cands, pick.expected_cost_usd,
-                               True, action, source, reasons)
+                               True, action, source, reasons, context_limit_triggered)
     # Nothing fully qualifies: transparent strongest-fallback.
     pick = max(cands, key=lambda c: (c.expected_quality, -c.expected_cost_usd))
     reasons.append(f"No model fully meets requirements; falling back to strongest "
                    f"available {pick.model_id} (flagged meets_requirements=False).")
     return RoutingDecision(pick.model_id, cands, pick.expected_cost_usd,
-                           False, "normal", source, reasons)
+                           False, "normal", source, reasons, context_limit_triggered)

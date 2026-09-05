@@ -192,7 +192,9 @@ def test_optimizer_integration():
           and r1.ledger.total_calls == 0)
     check("legacy analysis backend", r1.analysis.backend == "legacy_ml")
 
-    # opencode classifier recorded
+    # opencode classifier recorded (fresh cache: r1 stored its answer, and
+    # cache-first would otherwise skip the classifier on the exact hit)
+    cachemod.reset_cache_for_tests()
     res = cp_result("classifier", {"t": "O", "d": "E", "c": 0.8})
     with mock.patch.object(client, "classify", return_value=res):
         r2 = optmod.run_prompt("What is an API?", max_tokens=64,
@@ -202,14 +204,21 @@ def test_optimizer_integration():
               r2.ledger.status == "active" and r2.ledger.classifier.input_tokens == 30
               and r2.ledger.total_cost_usd > 0)
 
-    # exact hit: classifier still ran, no extra CP calls
-    with mock.patch.object(client, "classify", return_value=res):
+    # exact hit: cache-first means the classifier is NEVER called (§13) —
+    # the free legacy analyzer fills analysis/routing instead.
+    with mock.patch.object(client, "classify", return_value=res) as cls_mock:
         r3 = optmod.run_prompt("What is an API?", max_tokens=64,
                                _generate=fake("An API is a contract between programs."),
                                _evaluate=evaluate)
         check("exact hit returns cached", r3.cache_hit and r3.cache_kind == "exact")
-        check("exact hit ledger has only classifier",
-              r3.ledger.total_calls == 1 and r3.ledger.classifier.calls == 1)
+        check("exact hit avoids classifier (cache-first)",
+              r3.ledger.total_calls == 0 and r3.ledger.classifier.calls == 0
+              and cls_mock.assert_not_called() is None)
+        check("exact hit avoided-counter incremented",
+              r3.ledger.calls_avoided_exact == 1
+              and r3.ledger.view()["totals"]["classifier_calls_avoided_exact"] == 1)
+        check("exact hit analysis is legacy (honest)",
+              r3.analysis.backend == "legacy_ml")
 
     # quality_check_mode=off: no LLM judge even for subjective
     with mock.patch.object(client, "classify", return_value=res):

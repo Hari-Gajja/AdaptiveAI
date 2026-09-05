@@ -68,6 +68,11 @@ class ControlPlaneLedger:
     fallback_used: bool = False
     fallback_reason: str = ""
     status: str = "disabled"   # disabled | active | degraded
+    # §13 cache-first: classifier calls avoided by checking the cache BEFORE
+    # classification. Tracked so dashboards/benchmarks can show control-plane
+    # savings, not just task-model savings.
+    calls_avoided_exact: int = 0
+    calls_avoided_semantic: int = 0
 
     # ---- recording ------------------------------------------------------
     def record(self, kind: str, input_tokens: int | None, output_tokens: int | None,
@@ -140,6 +145,8 @@ class ControlPlaneLedger:
                 "latency_ms": self.total_latency_ms,
                 "cost_usd": self.total_cost_usd,
                 "estimated_usage_calls": self.estimated_calls,
+                "classifier_calls_avoided_exact": self.calls_avoided_exact,
+                "classifier_calls_avoided_semantic": self.calls_avoided_semantic,
             },
         }
 

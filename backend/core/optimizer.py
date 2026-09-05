@@ -1,7 +1,7 @@
 """Request Optimizer — Phase 5 orchestration + Phase 8 control plane.
 
-Pipeline: cache-check -> analyze -> route -> generate -> quality-check
--> escalate (max N) -> cost + counterfactual baseline. MongoDB hooks in later.
+Pipeline: free local work -> cache-check -> classify -> route -> generate
+-> quality-check -> escalate (max N) -> cost + counterfactual baseline.
 
 Phase 8 (OpenCode control plane):
   - classification via backend.llm.opencode_classifier (legacy fallback)
@@ -12,6 +12,16 @@ Phase 8 (OpenCode control plane):
   - all control-plane token spend tracked in a ControlPlaneLedger:
     Total Cost = Control Plane + Task Model
 
+Token optimization (spec §3/§13/§19/§21):
+  - cache-first: exact/semantic cache checked BEFORE the LLM classifier —
+    hits avoid the classifier call entirely (ledger.calls_avoided_*)
+  - free local work first: legacy analysis, prompt normalization, output
+    budget prediction (token_optimizer) — no API calls
+  - task-aware minimal system prompts (prompt_builder) when
+    PROMPT_TEMPLATES_ENABLED
+  - per-request token report (token_analytics): task model vs control
+    plane vs avoided tokens
+
 Actual cost = SUM over attempts (money really spent, including failed ones).
 Exact cache hits skip the LLM entirely (cost 0, measured savings).
 """
@@ -20,13 +30,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from backend.config import settings
+from backend.config import PROMPT_TEMPLATES_ENABLED, settings
 from backend.core.cache import CacheEntry, get_cache
 from backend.core.cost import actual_cost_usd, baseline_method, baseline_model, cost_summary
+from backend.core.prompt_builder import build_task_messages
 from backend.core.quality import QualityScore, evaluate
 from backend.core.registry import ModelEntry, get_registry
 from backend.core.router import CandidateView, RoutingDecision, route
 from backend.core.task_analyzer import TaskAnalysis, analyze
+from backend.core.token_analytics import build_token_report
+from backend.core.token_optimizer import normalize_prompt, predict_output_budget
 from backend.llm import config as cp_cfg
 from backend.llm.cache_verifier import verify_reuse
 from backend.llm.ledger import ControlPlaneLedger, empty_ledger
@@ -85,6 +98,13 @@ class OptimizerResult:
     frontier_escalations: int = 0
     cache_verifier: dict | None = None
     quality_evaluator: dict | None = None
+    # --- Token optimization (spec §3/§19/§21). Defaults keep direct
+    # constructions (tests, benchmark fakes) valid. ---
+    token_report: dict | None = None
+    normalization: dict | None = None
+    estimated_output_tokens: int = 256
+    output_budget_signals: list = field(default_factory=list)
+    context_limit_triggered: bool = False
 
     @property
     def initial_model(self) -> str:
@@ -124,7 +144,7 @@ def _finish_costs(result: OptimizerResult, enabled: list[ModelEntry]) -> None:
 
 def run_prompt(
     prompt: str,
-    max_tokens: int = 512,
+    max_tokens: int | None = 512,
     temperature: float = 0.2,
     reference: str | None = None,
     force_model: str | None = None,
@@ -140,7 +160,11 @@ def run_prompt(
 ) -> OptimizerResult:
     """Full pipeline. _generate/_evaluate are injectable for keyless tests.
     classifier_backend/quality_check_mode/cache_verify override the env config
-    per request (used by the benchmark A/B modes)."""
+    per request (used by the benchmark A/B modes).
+
+    max_tokens: explicit int wins; None = auto output budget from the task
+    analysis (predicted small/medium/large) so short answers don't pay for a
+    512-token allowance."""
     if not prompt or not prompt.strip():
         raise ValueError("prompt must not be empty")
     threshold = settings.quality_threshold if threshold is None else threshold
@@ -164,38 +188,45 @@ def run_prompt(
     cp_active = cp_cfg.OPENCODE_ENABLED and backend_cls == "opencode"
     ledger.status = "active" if cp_active else "disabled"
 
-    # ---- classification (control plane when enabled, legacy otherwise) ----
-    analysis = classify_prompt(prompt, context or None, force_backend=backend_cls)
-    if analysis.backend == "opencode" and analysis.control_plane:
-        cp = analysis.control_plane
-        ledger.record("classifier", cp.get("input_tokens"), cp.get("output_tokens"),
-                      cp.get("latency_ms", 0), bool(cp.get("usage_estimated")))
-    if analysis.fallback_used:
-        ledger.fallback_used = True
-        ledger.fallback_reason = analysis.fallback_reason
-        if ledger.status == "active":
-            ledger.status = "degraded"
-    routing = route(analysis, enabled_list)
-    reasons = list(routing.decision_reason)
-    if analysis.fallback_used:
-        reasons.append(f"Classifier fallback: {analysis.fallback_reason}. "
-                       f"Legacy heuristic classification used.")
+    # ---- free local work first (no API calls, spec §3) ----
+    norm = normalize_prompt(prompt)
+    budget, budget_signals = predict_output_budget(prompt)
 
-    # ---- exact cache hit: skip the LLM entirely (analysis/routing still shown) ----
+    # ---- cache-first (spec §13): check the cache BEFORE paying for
+    # classification. A hit avoids the classifier call entirely; the free
+    # legacy analyzer still runs so routing/analysis stay populated and the
+    # dashboard can show the control-plane savings honestly. ----
+    legacy_analysis = analyze(prompt, context or None)
+    reasons: list[str] = []
+
     if use_cache:
         hit = cache.get_exact(prompt, context)
         if hit is not None:
             cache.note_exact_hit(hit)
+            ledger.calls_avoided_exact += 1
+            routing = route(legacy_analysis, enabled_list)
+            reasons = list(routing.decision_reason)
             reasons.append(f"Cache EXACT hit: returning stored answer from {hit.model_id}, "
                            f"skipped LLM call (measured savings ${hit.cost_usd:.6f}).")
+            reasons.append(f"Cache-first: classifier call avoided "
+                           f"(~{legacy_analysis.estimated_input_tokens} input tokens saved).")
             routing.decision_reason = reasons
             ledger.finalize()
+            saved_kind = "measured" if hit.cost_usd is not None else "unavailable"
             result = OptimizerResult(
-                answer=hit.answer, analysis=analysis, routing=routing,
+                answer=hit.answer, analysis=legacy_analysis, routing=routing,
                 cache_hit=True, cache_kind="exact",
                 tokens_avoided=hit.input_tokens + hit.output_tokens,
-                cache_saved_usd=hit.cost_usd, cache_saved_kind="measured" if hit.cost_usd is not None else "unavailable",
-                ledger=ledger)
+                cache_saved_usd=hit.cost_usd, cache_saved_kind=saved_kind,
+                ledger=ledger,
+                token_report=build_token_report(
+                    [], ledger.view(), True, "exact",
+                    hit.input_tokens + hit.output_tokens, saved_kind,
+                    norm.view(), 0),
+                normalization=norm.view(),
+                estimated_output_tokens=legacy_analysis.estimated_output_tokens,
+                output_budget_signals=list(budget_signals),
+                context_limit_triggered=routing.context_limit_triggered)
             _finish_costs_free_hit(result, enabled_list, hit)
             return result
 
@@ -224,22 +255,35 @@ def run_prompt(
                     reuse = False
             if reuse:
                 cache.note_semantic_hit(sem_hit, sem_score)
+                ledger.calls_avoided_semantic += 1
+                routing = route(legacy_analysis, enabled_list)
+                reasons.extend(routing.decision_reason)
                 reasons.append(
                     f"Cache SEMANTIC hit (similarity {sem_score:.2f} >= {cache._sem_threshold}): "
                     f"all safety gates passed (numbers, operators, ordinals, units, directions, "
                     f"language, structures, identifiers, intent, negation, context). "
                     f"Returning stored answer from {sem_hit.model_id}, skipped LLM call "
                     f"(measured savings ${sem_hit.cost_usd:.6f}).")
+                reasons.append("Cache-first: classifier call avoided.")
                 routing.decision_reason = reasons
                 ledger.finalize()
+                saved_kind = "measured" if sem_hit.cost_usd is not None else "unavailable"
                 result = OptimizerResult(
-                    answer=sem_hit.answer, analysis=analysis, routing=routing,
+                    answer=sem_hit.answer, analysis=legacy_analysis, routing=routing,
                     cache_hit=True, cache_kind="semantic",
                     tokens_avoided=sem_hit.input_tokens + sem_hit.output_tokens,
                     cache_saved_usd=sem_hit.cost_usd,
-                    cache_saved_kind="measured" if sem_hit.cost_usd is not None else "unavailable",
+                    cache_saved_kind=saved_kind,
                     ledger=ledger,
-                    cache_verifier=verify_outcome.view() if verify_outcome else None)
+                    cache_verifier=verify_outcome.view() if verify_outcome else None,
+                    token_report=build_token_report(
+                        [], ledger.view(), True, "semantic",
+                        sem_hit.input_tokens + sem_hit.output_tokens, saved_kind,
+                        norm.view(), 0),
+                    normalization=norm.view(),
+                    estimated_output_tokens=legacy_analysis.estimated_output_tokens,
+                    output_budget_signals=list(budget_signals),
+                    context_limit_triggered=routing.context_limit_triggered)
                 _finish_costs_free_hit(result, enabled_list, sem_hit)
                 return result
             # verifier vetoed: fall through to routing as a miss
@@ -253,6 +297,30 @@ def run_prompt(
             reasons.append(f"Semantic tier: best similarity {sem_score:.2f} "
                            f"below threshold {cache._sem_threshold}.")
 
+    # ---- classification (control plane when enabled, legacy otherwise).
+    # Only reached on a cache miss — hits never pay for the classifier. ----
+    analysis = classify_prompt(prompt, context or None, force_backend=backend_cls)
+    if analysis.backend == "opencode" and analysis.control_plane:
+        cp = analysis.control_plane
+        ledger.record("classifier", cp.get("input_tokens"), cp.get("output_tokens"),
+                      cp.get("latency_ms", 0), bool(cp.get("usage_estimated")))
+    if analysis.fallback_used:
+        ledger.fallback_used = True
+        ledger.fallback_reason = analysis.fallback_reason
+        if ledger.status == "active":
+            ledger.status = "degraded"
+    routing = route(analysis, enabled_list)
+    reasons.extend(routing.decision_reason)
+    if analysis.fallback_used:
+        reasons.append(f"Classifier fallback: {analysis.fallback_reason}. "
+                       f"Legacy heuristic classification used.")
+
+    # ---- output budget (spec §3/§12): explicit caller value wins; None means
+    # auto — use the predicted budget so we don't pay for 512 output tokens
+    # on a one-line answer. ----
+    effective_max = max_tokens if max_tokens is not None else \
+        (analysis.estimated_output_tokens or 256)
+
     # ---- context hit: reusable context seen before, new question ----
     ctx_tokens = len(context) // 4 if context else 0
     ctx_hit = cache.get_context(context) if (use_cache and context) else None
@@ -264,15 +332,25 @@ def run_prompt(
         reasons.append(f"Demo override: first attempt forced to {force_model} "
                        f"(router preferred {routing.selected_model}).")
 
-    result = OptimizerResult(answer="", analysis=analysis, routing=routing, ledger=ledger)
+    result = OptimizerResult(answer="", analysis=analysis, routing=routing, ledger=ledger,
+                             estimated_output_tokens=effective_max,
+                             output_budget_signals=list(budget_signals),
+                             context_limit_triggered=routing.context_limit_triggered,
+                             normalization=norm.view())
     tried: set[str] = set()
     for i, mid in enumerate(order):
         entry = enabled[mid]
-        messages = ([{"role": "system", "content": context}] if context else []) + \
-                   [{"role": "user", "content": prompt}]
+        if PROMPT_TEMPLATES_ENABLED:
+            # Task-aware minimal system prompt (spec §19): short template with
+            # the output contract; context in the system role; user turn raw.
+            messages = build_task_messages(prompt, analysis, context or None,
+                                           output_budget=effective_max)
+        else:
+            messages = ([{"role": "system", "content": context}] if context else []) + \
+                       [{"role": "user", "content": prompt}]
         try:
             r: GenerateResult = _generate(mid, messages,
-                                          max_tokens=max_tokens, temperature=temperature)
+                                          max_tokens=effective_max, temperature=temperature)
         except OpenCodeError as e:
             failure_type = _provider_failure_type(e)
             if failure_type == "permanent":
@@ -369,6 +447,9 @@ def run_prompt(
 
     ledger.finalize()
     _finish_costs(result, enabled_list)
+    result.token_report = build_token_report(
+        result.attempts, ledger.view(), result.cache_hit, result.cache_kind,
+        result.tokens_avoided, result.cache_saved_kind, norm.view(), ctx_tokens)
     return result
 
 

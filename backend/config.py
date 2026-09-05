@@ -35,6 +35,18 @@ REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 SEMANTIC_THRESHOLD: float = float(os.getenv("SEMANTIC_THRESHOLD", "0.50"))
 SEMANTIC_MAX_ENTRIES: int = int(os.getenv("SEMANTIC_MAX_ENTRIES", "256"))
 
+# --- Token optimization (spec §3/§19) ---
+# PROMPT_TEMPLATES_ENABLED: task-aware minimal system prompts (prompt_builder).
+# Templates only ADD a short system clause for math/coding/debugging/etc;
+# plain general questions pass through untouched. Disable to send raw turns.
+PROMPT_TEMPLATES_ENABLED: bool = os.getenv(
+    "PROMPT_TEMPLATES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+# Naive baseline output budget for token-savings math (spec §21): the
+# counterfactual "unoptimized" request is assumed to request this many output
+# tokens. Optimized requests use the predicted budget instead.
+TOKEN_OPT_BASELINE_OUTPUT_BUDGET: int = int(
+    os.getenv("TOKEN_OPT_BASELINE_OUTPUT_BUDGET", "1024"))
+
 # Pricing: USD per 1M tokens, off-peak where DeepSeek publishes peak/off-peak.
 # Source: https://opencode.ai/docs/go (Sep 2026). Update here if docs change —
 # the router and cost engine read ONLY from this table, never hard-coded values.

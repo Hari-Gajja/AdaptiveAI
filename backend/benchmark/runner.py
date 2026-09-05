@@ -53,6 +53,7 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
     from backend.core.optimizer import run_prompt
     from backend.core.quality import evaluate
     from backend.core.registry import get_registry
+    from backend.core.token_analytics import aggregate_token_reports
     from backend.providers.opencode import generate as _real_generate
     _run = _run or run_prompt
     _generate = _generate or _real_generate
@@ -90,6 +91,24 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
     classification_correct = 0
     classification_total = 0
     confusion: Counter = Counter()
+    # Token optimization (spec §21): aggregate per-query token reports.
+    token_reports: list[dict] = []
+    # Model-selection quality (spec §22): routing accuracy vs the baseline
+    # (frontier) model, unnecessary frontier usage, cheap-model failures.
+    routing_correct = 0
+    unnecessary_frontier = 0
+    cheap_failures = 0
+    correct_answers = 0
+    # §13 cache-first: classifier calls avoided by cache hits.
+    cp_calls_avoided_exact = 0
+    cp_calls_avoided_semantic = 0
+    # Category -> expected task_type for classification-accuracy scoring.
+    _CAT_TO_TYPE = {
+        "easy": "general", "coding": "coding", "reasoning": "reasoning",
+        "math": "mathematics", "summarization": "summarization",
+        "architecture": "architecture", "long_context": "long_context",
+        "repeated_context": "general",
+    }
 
     for i, q in enumerate(queries):
         # Phase 8 A/B mode knobs:
@@ -99,6 +118,9 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
         #   exact_cache          -> OpenCode + exact cache only
         #   full_optimizer       -> OpenCode + full optimizer (semantic+context cache)
         #   full_plus_llm_eval   -> full optimizer + LLM evaluator (live mode)
+        #   full_plus_token_opt  -> full optimizer + prompt templates + auto output
+        #                           budget, single attempt (spec §3/§13)
+        #   full_plus_token_opt_escalation -> same + escalation allowed (max 2)
         run_kwargs: dict = {"reference": q.get("reference_answer"),
                             "context": q.get("context"),
                             "max_tokens": q.get("max_tokens", 256),
@@ -113,6 +135,10 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
             run_kwargs.update({"cache_verify": False})
         elif mode == "full_plus_llm_eval":
             run_kwargs.update({"quality_check_mode": "live"})
+        elif mode == "full_plus_token_opt":
+            run_kwargs.update({"max_tokens": None, "max_attempts": 1})
+        elif mode == "full_plus_token_opt_escalation":
+            run_kwargs.update({"max_tokens": None, "max_attempts": 2})
         try:
             res = _run(q["prompt"], **run_kwargs)
         except Exception as e:
@@ -163,6 +189,34 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
         cp_latency += led.total_latency_ms
         cp_calls += led.total_calls
         cp_fallbacks += 1 if led.fallback_used else 0
+        cp_calls_avoided_exact += led.calls_avoided_exact
+        cp_calls_avoided_semantic += led.calls_avoided_semantic
+        # Token report per query (spec §21)
+        if res.token_report:
+            token_reports.append(res.token_report)
+        # Model-selection quality (spec §22)
+        # routing_accuracy: the routed model produced a passing answer —
+        # the router's capability prediction was right.
+        if res.quality_passed:
+            routing_correct += 1
+            correct_answers += 1
+        # unnecessary_frontier_usage: final model == baseline (frontier).
+        # Labeled as usage, not proof of waste (a cheaper model might also
+        # have failed) — the dashboard states this caveat.
+        if res.final_model == base_entry.model_id:
+            unnecessary_frontier += 1
+        # cheap_failure_rate: first (cheapest-capable) attempt failed quality
+        # and escalation was needed — the cost of aggressive down-routing.
+        if res.escalated and res.attempts and not res.attempts[0].passed:
+            cheap_failures += 1
+        # Classification accuracy: analyzer task_type vs query category.
+        expected = _CAT_TO_TYPE.get(q.get("category", ""))
+        if expected:
+            classification_total += 1
+            if res.analysis.task_type == expected:
+                classification_correct += 1
+            else:
+                confusion[f"{expected}->{res.analysis.task_type}"] += 1
         # routing agreement: legacy vs opencode classification path
         if getattr(res.analysis, "backend", None) == "opencode":
             routing_total += 1
@@ -264,6 +318,20 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
         "median_latency_ms": round(median(latencies)) if latencies else None,
         "total_input_tokens": total_in,
         "total_output_tokens": total_out,
+        # ---- Token optimization aggregates (spec §21) ----
+        "token_aggregate": aggregate_token_reports(token_reports) if token_reports else None,
+        "classifier_calls_avoided_exact": cp_calls_avoided_exact,
+        "classifier_calls_avoided_semantic": cp_calls_avoided_semantic,
+        # ---- Model-selection quality (spec §22) ----
+        "routing_accuracy": round(routing_correct / n, 3) if n else 0.0,
+        "correct_answers": correct_answers,
+        "cost_per_correct_answer": (round(opt_cost / correct_answers, 6)
+                                    if correct_answers else None),
+        "unnecessary_frontier_usage": round(unnecessary_frontier / n, 3) if n else 0.0,
+        "cheap_failure_rate": round(cheap_failures / n, 3) if n else 0.0,
+        "classification_accuracy": (round(classification_correct / classification_total, 3)
+                                    if classification_total else None),
+        "classification_confusion": dict(confusion),
         "per_query": per_query,
         "finished_at": _now(),
     }

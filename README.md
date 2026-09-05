@@ -42,8 +42,15 @@ plus a React control center:
   `estimated`). Never conflated.
 - **Cost engine** — actual spend + counterfactual always-best baseline
   (measured tokens × best-model pricing; no duplicate expensive calls).
+- **Token optimizer** — free, deterministic: prompt normalization (code fences
+  preserved), chars/4 token estimation, and predicted output budgets
+  (128/256/512) so short answers don't pay for a 512-token allowance. Cache
+  hits are checked BEFORE the LLM classifier, so a hit avoids the classifier
+  call entirely (`classifier_calls_avoided_exact/semantic`).
 - **Benchmark Lab** — 50 reference-scored queries across 10 categories;
-  baseline quality measured on a deterministic n=5 sample.
+  baseline quality measured on a deterministic n=5 sample. Plus a
+  naive-vs-optimized token-efficiency benchmark (fixed 1024-token budget vs
+  predicted budget + templates + normalization).
 
 ## Architecture
 
@@ -139,6 +146,7 @@ python backend\test_cache_cost.py
 python backend\test_profiler.py
 python backend\test_benchmark.py
 python backend\test_control_plane.py
+python backend\test_token_optimizer.py
 ```
 
 ## Environment variables
@@ -159,6 +167,8 @@ python backend\test_control_plane.py
 | `CACHE_VERIFY_ENABLED` | Veto-only semantic-reuse verifier (default `true`) |
 | `CONTROL_PLANE_PROMPT_MAX_CHARS` | CP prompt clip (default `1200`) |
 | `CLASSIFIER_MAX_OUTPUT_TOKENS` / `VERIFIER_MAX_OUTPUT_TOKENS` / `EVALUATOR_MAX_OUTPUT_TOKENS` | CP output budgets (50/40/80) |
+| `PROMPT_TEMPLATES_ENABLED` | Task-aware minimal system prompts (default `true`) |
+| `TOKEN_OPT_BASELINE_OUTPUT_BUDGET` | Naive-arm output budget for token-savings math (default `1024`) |
 
 ## API endpoints
 
@@ -183,6 +193,8 @@ python backend\test_control_plane.py
 | POST | `/api/benchmark/run` | start benchmark job (`limit`, `baseline_sample_n`, `mode`) |
 | GET | `/api/benchmark/jobs/{id}` | progress |
 | GET | `/api/benchmark/latest` | last completed result |
+| POST | `/api/benchmark/token-efficiency` | start naive-vs-optimized token benchmark (`limit`) |
+| GET | `/api/benchmark/token-efficiency/{id}` | token benchmark progress/result |
 | POST | `/api/test/generate` | single-model smoke test |
 
 ## MongoDB schema (db `llm_optimizer`)

@@ -27,6 +27,9 @@ export const api = {
     fetch('/api/benchmark/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: limit || 0, baseline_sample_n: baseline_sample_n || 5, baseline_quality_mode, mode }) }).then(j),
   benchmarkJob: (id) => fetch(`/api/benchmark/jobs/${id}`).then(j),
   benchmarkLatest: () => fetch('/api/benchmark/latest').then(j),
+  tokenBenchmarkRun: (limit = 10) =>
+    fetch('/api/benchmark/token-efficiency', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit }) }).then(j),
+  tokenBenchmarkJob: (id) => fetch(`/api/benchmark/token-efficiency/${id}`).then(j),
 }
 
 export const usd = (n) => (n == null ? '–' : `$${Number(n).toFixed(n < 0.01 ? 6 : 4)}`)

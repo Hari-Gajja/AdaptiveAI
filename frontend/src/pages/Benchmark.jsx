@@ -26,6 +26,8 @@ export default function Benchmark() {
   const [filter, setFilter] = useState('all')
   const [revealKey, setRevealKey] = useState(0)
   const [mode, setMode] = useState('full_optimizer')
+  const [tokJob, setTokJob] = useState(null)
+  const [tokRes, setTokRes] = useState(null)
 
   const loadLatest = (bump = true) => api.benchmarkLatest().then((d) => {
     setLatest((prev) => {
@@ -55,6 +57,19 @@ export default function Benchmark() {
     } catch (e) { setErr(String(e)) }
   }
 
+  const runToken = async (limit = 10) => {
+    setErr('')
+    try {
+      const { job_id } = await api.tokenBenchmarkRun(limit)
+      setTokJob({ job_id, status: 'running', done: 0, total: limit || (info?.count ?? 50) })
+      const poll = setInterval(async () => {
+        const j = await api.tokenBenchmarkJob(job_id)
+        setTokJob(j)
+        if (j.status !== 'running') { clearInterval(poll); if (j.status === 'done') setTokRes(j.result) }
+      }, 4000)
+    } catch (e) { setErr(String(e)) }
+  }
+
   const categories = info ? Object.keys(info.categories) : []
   const rows = (latest && latest.per_query) || []
   const shown = filter === 'all' ? rows : rows.filter((q) => q.category === filter)
@@ -70,13 +85,15 @@ export default function Benchmark() {
           sub="Optimizer vs always-best — measured, not claimed."
           actions={
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <select className="input sm" value={mode} onChange={(e) => setMode(e.target.value)} style={{ maxWidth: 220 }} disabled={job && job.status === 'running'}>
+                            <select className="input sm" value={mode} onChange={(e) => setMode(e.target.value)} style={{ maxWidth: 220 }} disabled={job && job.status === 'running'}>
                 <option value="always_frontier">A/B: Always frontier</option>
                 <option value="legacy_classifier">A/B: Legacy classifier</option>
                 <option value="opencode_classifier">A/B: OpenCode classifier</option>
                 <option value="exact_cache">A/B: OpenCode + exact cache</option>
                 <option value="full_optimizer">A/B: Full optimizer</option>
                 <option value="full_plus_llm_eval">A/B: Full + LLM eval</option>
+                <option value="full_plus_token_opt">A/B: Full + token opt (1 attempt)</option>
+                <option value="full_plus_token_opt_escalation">A/B: Full + token opt + escalation</option>
               </select>
               <button className="btn ghost sm" onClick={() => run(10)} disabled={job && job.status === 'running'}>Run 10 (smoke)</button>
               <button className="btn primary" onClick={() => run(0, 'sampled')} disabled={job && job.status === 'running'}>
@@ -84,6 +101,9 @@ export default function Benchmark() {
               </button>
               <button className="btn ghost sm" onClick={() => run(0, 'full')} disabled={job && job.status === 'running'}>
                 Full baseline quality
+              </button>
+              <button className="btn ghost sm" onClick={() => runToken(10)} disabled={tokJob && tokJob.status === 'running'}>
+                {tokJob && tokJob.status === 'running' ? `Tokens ${tokJob.done}/${tokJob.total}` : 'Token efficiency (10)'}
               </button>
             </div>
           }
@@ -125,6 +145,7 @@ export default function Benchmark() {
             <KPI label="Quality" value={`${(latest.optimizer_quality * 100).toFixed(1)}%`} sub={`baseline ${latest.baseline_quality != null ? (latest.baseline_quality * 100).toFixed(1) + '%' : 'N/A'} · retained ${latest.quality_retention != null ? (latest.quality_retention * 100).toFixed(1) + '%' : 'N/A'}`} />
             <KPI label="Cache hits" value={`${(latest.cache_hit_rate * 100).toFixed(0)}%`} sub="exact + context" />
             <KPI label="Escalations" value={`${(latest.escalation_rate * 100).toFixed(0)}%`} sub={`${latest.escalation_count ?? Math.round(latest.escalation_rate * latest.queries_tested)} · avg ${latest.avg_latency_ms} ms`} />
+            <KPI label="Cost / correct answer" value={latest.cost_per_correct_answer != null ? usd(latest.cost_per_correct_answer) : 'N/A'} sub={`${latest.correct_answers ?? 0}/${latest.queries_tested} passed quality`} />
           </div>
           </div>
 
@@ -147,6 +168,24 @@ export default function Benchmark() {
               <KPI label="CP cost" value={usd(latest.control_plane_cost_usd ?? 0)} sub="priced with CP model rates" />
               <KPI label="CP latency" value={latest.control_plane_latency_ms != null ? `${latest.control_plane_latency_ms} ms` : 'N/A'} sub="summed across calls" />
             </div>
+          </Card>
+          <Card style={{ marginTop: 18 }}>
+            <CardHead title="Token optimization" sub="Normalization, output budgets, and classifier calls avoided by cache-first routing." />
+            <div className="kpis">
+              <KPI label="Input tokens saved (norm)" value={latest.token_aggregate?.totals?.input_tokens_saved_estimate ?? 0} sub="prompt normalization estimate" />
+              <KPI label="Classifier calls avoided" value={`${(latest.classifier_calls_avoided_exact ?? 0) + (latest.classifier_calls_avoided_semantic ?? 0)}`} sub={`exact ${latest.classifier_calls_avoided_exact ?? 0} · semantic ${latest.classifier_calls_avoided_semantic ?? 0}`} />
+              <KPI label="Routing accuracy" value={latest.routing_accuracy != null ? pct(latest.routing_accuracy * 100) : 'N/A'} sub="routed model passed quality" />
+              <KPI label="Frontier usage" value={latest.unnecessary_frontier_usage != null ? pct(latest.unnecessary_frontier_usage * 100) : 'N/A'} sub="final model = always-best baseline" />
+              <KPI label="Cheap failures" value={latest.cheap_failure_rate != null ? pct(latest.cheap_failure_rate * 100) : 'N/A'} sub="first attempt failed → escalated" />
+              <KPI label="Classification accuracy" value={latest.classification_accuracy != null ? pct(latest.classification_accuracy * 100) : 'N/A'} sub="analyzer task_type vs query category" />
+            </div>
+            {latest.classification_confusion && Object.keys(latest.classification_confusion).length > 0 && (
+              <div className="row" style={{ gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                {Object.entries(latest.classification_confusion).map(([k, v]) => (
+                  <Badge key={k} tone="warn">{k}: {v}</Badge>
+                ))}
+              </div>
+            )}
           </Card>
           </div>
 
@@ -182,7 +221,39 @@ export default function Benchmark() {
             </Card>
           </div>
           </div>
-
+          {tokRes && (
+            <Card style={{ marginTop: 18 }}>
+              <CardHead title="Token efficiency: naive vs optimized" sub={`Same queries, raw prompt + fixed ${tokRes.baseline_output_budget} budget vs templates + predicted budget. Measured, no estimates.`} />
+              <div className="kpis">
+                <KPI label="Output tokens saved" value={tokRes.output_tokens_saved} sub={`${tokRes.output_tokens_saved_pct}% vs naive`} tone={tokRes.output_tokens_saved > 0 ? 'up' : 'down'} />
+                <KPI label="Cost saved" value={usd(tokRes.cost_saved_usd)} sub={`${tokRes.cost_saved_pct}% vs naive`} tone={tokRes.cost_saved_usd > 0 ? 'up' : 'down'} />
+                <KPI label="Quality delta" value={tokRes.quality_delta != null ? (tokRes.quality_delta >= 0 ? `+${tokRes.quality_delta}` : tokRes.quality_delta) : 'N/A'} sub="optimized − naive" />
+                <KPI label="Naive avg out" value={tokRes.naive.avg_output_tokens} sub={`optimized avg ${tokRes.optimized.avg_output_tokens}`} />
+              </div>
+              <div className="tbl-wrap" style={{ maxHeight: 260, overflow: 'auto', marginTop: 10 }}>
+                <table className="tbl">
+                  <thead>
+                    <tr><th>#</th><th>Category</th><th>Naive in/out</th><th>Opt in/out</th><th>Opt budget</th><th>Norm saved</th></tr>
+                  </thead>
+                  <tbody>
+                    {tokRes.optimized.rows.map((r, i) => {
+                      const nrow = tokRes.naive.rows[i]
+                      return (
+                        <tr key={r.id || i}>
+                          <td className="num">{r.id}</td>
+                          <td>{r.category}</td>
+                          <td className="num">{nrow?.input_tokens ?? '–'} / {nrow?.output_tokens ?? '–'}</td>
+                          <td className="num">{r.input_tokens ?? '–'} / {r.output_tokens ?? '–'}</td>
+                          <td className="num">{r.estimated_output_tokens ?? '–'}</td>
+                          <td className="num">{r.normalization_tokens_saved ?? 0}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
           <div className={`phase phase-4${phase >= 4 ? ' in' : ''}`}>
           <Card style={{ marginTop: 18 }}>
             <CardHead

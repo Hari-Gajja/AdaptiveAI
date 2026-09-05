@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.benchmark.runner import get_job, load_queries, start_job
+from backend.benchmark.token_benchmark import start_token_job, get_token_job
 from backend.database.mongodb import get_store
 
 router = APIRouter(prefix="/api/benchmark", tags=["benchmark"])
@@ -18,7 +19,8 @@ class BenchmarkStart(BaseModel):
 
 
 MODES = ("always_frontier", "legacy_classifier", "opencode_classifier",
-         "exact_cache", "full_optimizer", "full_plus_llm_eval")
+         "exact_cache", "full_optimizer", "full_plus_llm_eval",
+         "full_plus_token_opt", "full_plus_token_opt_escalation")
 
 
 @router.get("/queries")
@@ -62,3 +64,25 @@ def benchmark_latest():
     if doc is None:
         raise HTTPException(404, "no benchmark has been run yet")
     return doc
+
+
+# ---- Token-efficiency benchmark (spec §13/§21) ----------------------------
+
+class TokenBenchmarkStart(BaseModel):
+    limit: int = 10  # 0 = all queries
+
+
+@router.post("/token-efficiency")
+def token_benchmark_run(body: TokenBenchmarkStart):
+    total = len(load_queries())
+    if body.limit < 0 or body.limit > total:
+        raise HTTPException(400, f"limit must be 0..{total}")
+    return {"job_id": start_token_job(body.limit), "queries": body.limit or total}
+
+
+@router.get("/token-efficiency/{job_id}")
+def token_benchmark_job(job_id: str):
+    job = get_token_job(job_id)
+    if job is None:
+        raise HTTPException(404, f"unknown token benchmark job '{job_id}'")
+    return job

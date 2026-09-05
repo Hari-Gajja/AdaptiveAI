@@ -21,7 +21,8 @@ cheap-qualifying. The ROUTER stays deterministic — only classification is LLM.
 """
 from __future__ import annotations
 
-from backend.core.task_analyzer import TaskAnalysis, analyze as legacy_analyze
+from backend.core.task_analyzer import (TaskAnalysis, analyze as legacy_analyze,
+                                        derive_metadata)
 from backend.llm import config as cp_cfg
 from backend.llm import opencode_client as client
 from backend.llm.prompt_budget import budget_for_classifier
@@ -77,6 +78,9 @@ def classify_prompt(prompt: str, context: str | None = None,
     difficulty = _LABEL_TO_DIFFICULTY[labels["d"]]
     confidence = float(labels["c"])
     required, thresholds = _derive_requirements(task_type, difficulty)
+    # §4 metadata is derived locally (deterministic, free) — the classifier
+    # JSON stays tiny; we never ask the LLM for these fields.
+    meta = derive_metadata(prompt, context, task_type, difficulty, confidence)
 
     a = TaskAnalysis(
         task_type=task_type,
@@ -87,6 +91,13 @@ def classify_prompt(prompt: str, context: str | None = None,
         detected_signals=[f"llm_label_{labels['t']}", f"llm_difficulty_{labels['d']}"],
         estimated_input_tokens=max(8, len(prompt) // 4) + (len(context) // 4 if context else 0),
         word_count=len(prompt.split()),
+        language=meta["language"],
+        has_math=meta["has_math"],
+        has_constraints=meta["has_constraints"],
+        requires_long_context=meta["requires_long_context"],
+        estimated_output_tokens=meta["estimated_output_tokens"],
+        ambiguity=meta["ambiguity"],
+        quality_requirement=meta["quality_requirement"],
     )
     a.backend = "opencode"
     a.fallback_used = False

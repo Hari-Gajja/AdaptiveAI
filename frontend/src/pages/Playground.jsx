@@ -304,6 +304,30 @@ function OptMeta({ res, onTrace }) {
               <span className="pg-meta-k">Status</span>
               <span className={`pg-meta-v${verified ? ' pg-ok' : ''}`}>{verified ? '✓ Verified' : res.verification_status || '—'}</span>
             </div>
+            {res.normalization && res.normalization.tokens_saved > 0 && (
+              <div className="pg-meta-item">
+                <span className="pg-meta-k">Prompt normalized</span>
+                <span className="pg-meta-v num">−{res.normalization.tokens_saved} tokens ({Math.round((res.normalization.compression_ratio || 1) * 100)}%)</span>
+              </div>
+            )}
+            {res.estimated_output_tokens != null && (
+              <div className="pg-meta-item">
+                <span className="pg-meta-k">Output budget</span>
+                <span className="pg-meta-v num">{res.estimated_output_tokens} tokens</span>
+              </div>
+            )}
+            {res.classifier_calls_avoided && (res.classifier_calls_avoided.exact > 0 || res.classifier_calls_avoided.semantic > 0) && (
+              <div className="pg-meta-item">
+                <span className="pg-meta-k">Classifier skipped</span>
+                <span className="pg-meta-v num">cache-first ({res.classifier_calls_avoided.exact} exact / {res.classifier_calls_avoided.semantic} semantic)</span>
+              </div>
+            )}
+            {res.context_limit_triggered && (
+              <div className="pg-meta-item">
+                <span className="pg-meta-k">Context limit</span>
+                <span className="pg-meta-v">router trimmed model list to fit context window</span>
+              </div>
+            )}
           </div>
           <button className="pg-trace-btn" onClick={onTrace}>
             <Route size={14} />

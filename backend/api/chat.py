@@ -22,7 +22,7 @@ router = APIRouter(tags=["chat"])
 
 class ChatRequest(BaseModel):
     prompt: str
-    max_tokens: int = 512
+    max_tokens: int | None = 512
     temperature: float = 0.2
     # Demo/testing aid: force the FIRST attempt to this (enabled) model.
     # Escalation then proceeds normally — used to demo fallback live.
@@ -31,6 +31,9 @@ class ChatRequest(BaseModel):
     max_attempts: int = 2
     context: str | None = None  # reusable context (docs/policy) for cache demo
     use_cache: bool = True
+    # Token optimization (spec §3): when true, max_tokens is ignored and the
+    # predicted output budget (small/medium/large) is used instead.
+    auto_output_budget: bool = False
 
 
 class PreviewRequest(BaseModel):
@@ -54,6 +57,9 @@ def _analysis_view(a) -> dict:
     if getattr(a, "fallback_used", False):
         view["fallback_used"] = True
         view["fallback_reason"] = a.fallback_reason
+    # §4 request metadata (language, math, constraints, output budget...).
+    if hasattr(a, "metadata_view"):
+        view["metadata"] = a.metadata_view()
     return view
 
 
@@ -89,7 +95,7 @@ def chat(req: ChatRequest):
     try:
         res = run_prompt(
             req.prompt,
-            max_tokens=req.max_tokens,
+            max_tokens=(None if req.auto_output_budget else req.max_tokens),
             temperature=req.temperature,
             reference=req.reference_answer,
             force_model=req.force_model,
@@ -173,6 +179,16 @@ def chat(req: ChatRequest):
         "quality_passes": res.quality_passes,
         "quality_failures": res.quality_failures,
         "frontier_escalations": res.frontier_escalations,
+        # ---- Token optimization (spec §3/§19/§21) ----
+        "token_report": res.token_report,
+        "normalization": res.normalization,
+        "estimated_output_tokens": res.estimated_output_tokens,
+        "output_budget_signals": res.output_budget_signals,
+        "context_limit_triggered": res.context_limit_triggered,
+        "classifier_calls_avoided": {
+            "exact": res.ledger.calls_avoided_exact,
+            "semantic": res.ledger.calls_avoided_semantic,
+        },
     }
     # Persist history for analytics/benchmark (never breaks the response).
     try:
@@ -206,6 +222,12 @@ def chat(req: ChatRequest):
             "control_plane_status": res.ledger.status,
             "total_cost_incl_cp_usd": round(res.total_cost_usd + res.ledger.total_cost_usd, 6),
             "fallback_used": res.ledger.fallback_used,
+            # Token optimization analytics (spec §21)
+            "estimated_output_tokens": res.estimated_output_tokens,
+            "normalization_tokens_saved": (res.normalization or {}).get("tokens_saved", 0),
+            "classifier_calls_avoided_exact": res.ledger.calls_avoided_exact,
+            "classifier_calls_avoided_semantic": res.ledger.calls_avoided_semantic,
+            "context_limit_triggered": res.context_limit_triggered,
         })
         resp["request_id"] = rid
     except Exception:
