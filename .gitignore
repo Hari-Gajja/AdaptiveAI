@@ -5,3 +5,7 @@ venv/
 .venv/
 node_modules/
 dist/
+.pytest_cache/
+server.log
+server.err.log
+out.txt
