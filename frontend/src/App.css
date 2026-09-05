@@ -176,11 +176,6 @@ body {
 .cache-meter strong { display: block; color: var(--cyan); font-size: 27px; line-height: 1; }
 .cache-meter span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 .cache-title { margin: 2px 0 5px; font-size: 22px; letter-spacing: -.02em; }
-.benchmark-summary { justify-content: space-between; gap: 18px; }
-.benchmark-summary > div { display: flex; flex-direction: column; gap: 2px; }
-.benchmark-summary strong { font-size: 21px; font-variant-numeric: tabular-nums; }
-.summary-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
-.benchmark-pulse { border-left: 3px solid var(--purple); }
 .savings-reveal { display: flex; align-items: center; gap: 10px; color: var(--good); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; opacity: 0; animation: revealSaved .7s .75s var(--ease) forwards; }
 .savings-line { height: 1px; flex: 1; background: linear-gradient(90deg, var(--orange), var(--good)); position: relative; }
 .savings-line::after { content: "↓"; position: absolute; right: 12%; top: -10px; font-size: 15px; color: var(--good); }
@@ -363,17 +358,6 @@ body {
 .stage.done .s-dot { background: var(--good); border-color: var(--good); color: #fff; font-size: 10px; }
 .stage.active .s-dot { background: var(--blue-bg); color: var(--blue); }
 
-/* ---------- Recharts polish ---------- */
-.recharts-cartesian-grid line { stroke: var(--line-soft) !important; }
-.recharts-text { fill: var(--muted) !important; font-size: 12px; font-family: var(--font) !important; }
-.recharts-tooltip-wrapper { outline: none; }
-.chart-tip {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: var(--shadow-md); padding: 9px 12px; font-size: 13px;
-}
-.chart-tip .t-title { font-weight: 600; margin-bottom: 2px; }
-.chart-tip .t-row { color: var(--text-2); font-variant-numeric: tabular-nums; }
-
 /* ---------- Fade in ---------- */
 .fade-in { animation: fadeUp 0.45s var(--ease) both; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -430,23 +414,6 @@ body {
 /* Savings reveal delay override (uses --d) */
 .savings-reveal { animation-delay: var(--d, .75s); }
 
-/* Story card (savings storytelling) */
-.story-card { border-top: 3px solid var(--good); background: linear-gradient(120deg, var(--good-bg), var(--panel) 55%); }
-.story-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.story-step { padding: 14px 16px; border-radius: var(--radius-sm); background: var(--panel); border: 1px solid var(--line-soft); opacity: 0; animation: fadeUp .55s var(--ease) both; animation-delay: var(--d, 0ms); }
-.story-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.story-value { font-size: 26px; font-weight: 750; margin-top: 6px; font-variant-numeric: tabular-nums; }
-.story-desc { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
-.story-good .story-value { color: var(--good); }
-.story-muted .story-value { color: var(--text-2); }
-
-/* Decision intelligence panel */
-.decision-card { border-left: 3px solid var(--purple); }
-.decision-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.decision-item { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-soft); border: 1px solid var(--line-soft); opacity: 0; animation: fadeUp .5s var(--ease) both; animation-delay: var(--d, 0ms); }
-.d-label { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
-.d-value { font-size: 20px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
-
 /* Playground: sequential trace steps + reasons + banners */
 .trace-seq { display: flex; flex-direction: column; align-items: center; }
 .trace-step { width: 100%; display: flex; flex-direction: column; align-items: center; opacity: 0; animation: fadeUp .5s var(--ease) both; animation-delay: var(--d, 0ms); }
@@ -484,15 +451,11 @@ body {
 .flow-node.cached { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan-bg); }
 .flow-node.warning { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-bg); }
 
-/* Scatter dots entrance — opacity only, never transform (recharts positions dots via translate on the same element) */
-.qc-dot { opacity: 0; animation: qcFadeIn .6s var(--ease) both; }
-@keyframes qcFadeIn { from { opacity: 0; } to { opacity: 1; } }
-
 /* Reduced motion: kill everything added above */
 @media (prefers-reduced-motion: reduce) {
-  .av-changed, .cc-row, .cc-savings-row, .cc-bar, .story-step, .decision-item,
+  .av-changed, .cc-row, .cc-savings-row, .cc-bar,
   .trace-step, .reason-line, .escalation-banner, .cache-banner, .cand-row,
-  .phase, .trace-row, .model-row, .detail-inner, .cap-bar-row, .qc-dot,
+  .phase, .trace-row, .model-row, .detail-inner, .cap-bar-row,
   .savings-reveal { animation: none !important; opacity: 1 !important; transform: none !important; }
 }
 
