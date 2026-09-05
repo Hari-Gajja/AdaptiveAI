@@ -18,7 +18,7 @@ export default function CachePage() {
   const clear = async () => { await api.cacheStats(); try { await fetch('/api/cache/clear', { method: 'POST' }); load() } catch (e) { setErr(String(e)) } }
 
   if (err) return <Err>{err}</Err>
-  if (!stats) return <SkeletonKPIs n={4} />
+  if (!stats) return <SkeletonKPIs n={6} />
 
   return (
     <div className="fade-in">

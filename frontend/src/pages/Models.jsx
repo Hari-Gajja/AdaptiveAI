@@ -161,7 +161,7 @@ export default function Models() {
                     </tr>
                     {isOpen && (
                       <tr className="detail-row">
-                        <td colSpan={9}>
+                        <td colSpan={11}>
                           <div className="detail-inner" style={{ background: 'var(--bg-soft)' }}>
                             <div className="grid two" style={{ gap: 14 }}>
                               <div>

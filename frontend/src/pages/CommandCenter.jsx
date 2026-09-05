@@ -42,7 +42,7 @@ export default function CommandCenter() {
   return (
     <div className="fade-in">
       <div className="status-strip"><span className="live-dot" />LIVE OPERATIONS <span>·</span> analytics from current request history <span className="live-refresh">auto-refreshing</span></div>
-      <div className="kpis">
+      <div className="kpis kpis-5">
         <KPI label="Cost saved" value={usd(savings)} sub={`${pct(savingsPct.toFixed ? savingsPct.toFixed(1) : savingsPct)} vs always-best`} tone="up" />
         <KPI label="Quality" value={quality.opt != null ? `${(quality.opt * 100).toFixed(1)}%` : '–'} sub={quality.kept != null ? `${(quality.kept * 100).toFixed(1)}% of baseline ${quality.base != null ? (quality.base * 100).toFixed(1) + '%' : ''}` : 'live average'} />
         <KPI label="Cache hit rate" value={`${(cacheRate * 100).toFixed(0)}%`} sub="exact + reusable-context hits" />
@@ -51,7 +51,7 @@ export default function CommandCenter() {
       </div>
 
       <div className="grid side" style={{ marginTop: 18 }}>
-        <div>
+        <div className="stack">
           <Card>
             <CardHead
               title="LIVE cost: optimizer vs baseline"
@@ -59,24 +59,8 @@ export default function CommandCenter() {
             />
             <CostCompare baseline={base} optimizer={opt} savings={savings} savingsPct={savingsPct} />
           </Card>
-        </div>
 
-        <div>
           <Card>
-            <CardHead title="How a request flows" sub="The pipeline every request takes." />
-            <Flow
-              nodes={[
-                { title: 'Request', sub: 'prompt + optional reusable context', icon: <Search size={14} /> },
-                { title: 'Analyze', sub: 'task type · difficulty · confidence', icon: <BrainCircuit size={14} /> },
-                { title: 'Route', sub: 'cheapest model that clears measured thresholds', icon: <GitBranch size={14} /> },
-                { title: 'Generate', sub: 'selected model answers', icon: <Gauge size={14} /> },
-                { title: 'Verify', sub: 'quality scored; escalate if below bar', icon: <CheckCircle2 size={14} />, status: 'success' },
-                { title: 'Measure', sub: 'cost, baseline and quality recorded', icon: <CircleDollarSign size={14} /> },
-              ]}
-            />
-          </Card>
-
-          <Card style={{ marginTop: 18 }}>
             <CardHead title="Model distribution" sub="Where requests actually landed." />
             {dist.length === 0 ? (
               <div className="muted">No requests yet — run the Playground or Benchmark.</div>
@@ -94,8 +78,24 @@ export default function CommandCenter() {
               </div>
             )}
           </Card>
+        </div>
 
-          <Card style={{ marginTop: 18 }}>
+        <div className="stack">
+          <Card>
+            <CardHead title="How a request flows" sub="The pipeline every request takes." />
+            <Flow
+              nodes={[
+                { title: 'Request', sub: 'prompt + optional reusable context', icon: <Search size={14} /> },
+                { title: 'Analyze', sub: 'task type · difficulty · confidence', icon: <BrainCircuit size={14} /> },
+                { title: 'Route', sub: 'cheapest model that clears measured thresholds', icon: <GitBranch size={14} /> },
+                { title: 'Generate', sub: 'selected model answers', icon: <Gauge size={14} /> },
+                { title: 'Verify', sub: 'quality scored; escalate if below bar', icon: <CheckCircle2 size={14} />, status: 'success' },
+                { title: 'Measure', sub: 'cost, baseline and quality recorded', icon: <CircleDollarSign size={14} /> },
+              ]}
+            />
+          </Card>
+
+          <Card>
             <CardHead title="Quality guardrail" sub="What the verify step guarantees." />
             <div className="quality-panel">
               <QualityGauge value={quality.opt} threshold={null} />

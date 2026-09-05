@@ -101,7 +101,7 @@ body {
   border-radius: 999px; padding: 3px 10px; display: flex; align-items: center; gap: 6px;
 }
 .hamburger { display: none; background: none; border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; cursor: pointer; color: var(--text-2); }
-.content { padding: 32px 40px 72px; max-width: 1240px; }
+.content { padding: 32px 40px 72px; max-width: 1240px; margin: 0 auto; width: 100%; }
 
 @media (max-width: 960px) {
   .sidebar { transform: translateX(-100%); box-shadow: var(--shadow-md); }
@@ -138,6 +138,16 @@ body {
 
 /* ---------- KPI grid ---------- */
 .kpis { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(172px, 1fr)); }
+.kpis.kpis-5 { grid-template-columns: repeat(5, 1fr); }
+.kpis.kpis-6 { grid-template-columns: repeat(6, 1fr); }
+@media (max-width: 1180px) { .kpis.kpis-5, .kpis.kpis-6 { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 720px) { .kpis.kpis-5, .kpis.kpis-6 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 460px) { .kpis.kpis-5, .kpis.kpis-6 { grid-template-columns: 1fr; } }
+.kpis.kpis-5 { grid-template-columns: repeat(5, 1fr); }
+.kpis.kpis-6 { grid-template-columns: repeat(6, 1fr); }
+@media (max-width: 1180px) { .kpis.kpis-5, .kpis.kpis-6 { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 720px) { .kpis.kpis-5, .kpis.kpis-6 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 460px) { .kpis.kpis-5, .kpis.kpis-6 { grid-template-columns: 1fr; } }
 .kpi { padding: 18px 20px; }
 .kpi { position: relative; overflow: hidden; }
 .kpi::after { content: ""; position: absolute; right: -22px; top: -28px; width: 84px; height: 84px; border-radius: 50%; background: var(--blue-bg); opacity: 0.75; }
@@ -323,6 +333,9 @@ body {
 @media (max-width: 720px) { .grid.three { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .cache-hero { grid-template-columns: 1fr; justify-items: start; } }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.stack { display: flex; flex-direction: column; }
+.stack > * { margin-top: 0 !important; }
+.stack > * + * { margin-top: 18px !important; }
 .spacer { flex: 1; }
 .muted { color: var(--muted); font-size: 13px; }
 .mono { font-family: var(--mono); font-size: 12.5px; }
