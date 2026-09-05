@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowRight } from 'lucide-react'
+import { ArrowDown, ArrowDownRight, ArrowRight, CircleDollarSign, TrendingDown } from 'lucide-react'
 import { usd } from '../services/api'
 import { Badge } from './ui'
 import { useEffect, useRef, useState } from 'react'
@@ -63,34 +63,44 @@ export function CostCompare({ baseline, optimizer, savings, savingsPct }) {
   const max = Math.max(baseline || 0, optimizer || 0, 1e-9)
   const risen = useRiseTo(savings || 0)
   const pctText = (savingsPct || 0).toFixed ? savingsPct.toFixed(1) : savingsPct
+  const basePct = ((baseline || 0) / max) * 100
+  const optPct = ((optimizer || 0) / max) * 100
+  const gapPct = Math.max(0, basePct - optPct)
   return (
     <div className="cost-compare" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      { [
-        { name: 'Baseline (always-best)', val: baseline || 0, tone: 'var(--faint)', cls: '' },
-        { name: 'Optimizer (this run)', val: optimizer || 0, tone: 'var(--text)', cls: 'cc-opt' },
-      ].map((r, i) => (
-        <div key={r.name} className="cc-row" style={{ '--d': `${i * 160}ms` }}>
-          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
-            <span className="muted" style={{ fontSize: 13 }}>{r.name}</span>
-            <span className="num" style={{ fontWeight: 600 }}>{usd(r.val)}</span>
-          </div>
-          <div className="bar">
-            <i className="cc-bar" style={{ width: `${(r.val / max) * 100}%`, background: r.tone, '--d': `${250 + i * 160}ms` }} />
-          </div>
+      <div className="cc-row" style={{ '--d': '0ms' }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+          <span className="cc-label"><CircleDollarSign size={13} />Baseline · always-best</span>
+          <span className="num" style={{ fontWeight: 600 }}>{usd(baseline || 0)}</span>
         </div>
-      ))}
-      { savings > 0 && (
+        <div className="bar cc-track">
+          <i className="cc-bar cc-base" style={{ width: `${basePct}%`, '--d': '250ms' }} />
+        </div>
+      </div>
+
+      <div className="cc-row" style={{ '--d': '160ms' }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+          <span className="cc-label cc-label-opt"><TrendingDown size={13} />Optimizer · this run</span>
+          <span className="num cc-opt-num" style={{ fontWeight: 700 }}>{usd(optimizer || 0)}</span>
+        </div>
+        <div className="bar cc-track">
+          <i className="cc-bar cc-opt" style={{ width: `${optPct}%`, '--d': '410ms' }} />
+        </div>
+      </div>
+
+      {savings > 0 && (
         <div className="cc-savings-row" style={{ '--d': '560ms' }}>
           <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
-            <span className="muted" style={{ fontSize: 13 }}>Savings</span>
+            <span className="cc-label cc-label-save"><ArrowDownRight size={13} />Savings</span>
             <span className="num cc-savings-num" style={{ fontWeight: 700 }}>{usd(risen)}</span>
           </div>
-          <div className="bar cc-savings-bar">
-            <i className="cc-bar" style={{ width: `${Math.min(100, ((savings || 0) / max) * 100)}%`, '--d': '700ms' }} />
+          <div className="bar cc-track cc-gap-track">
+            <i className="cc-bar cc-gap" style={{ width: `${gapPct}%`, '--d': '700ms' }} />
           </div>
         </div>
       )}
-      { savings > 0 && (
+
+      {savings > 0 && (
         <div className="savings-reveal" style={{ '--d': '950ms' }} aria-label={`Savings ${usd(savings)}`}>
           <span className="savings-line" />
           <span className="savings-caption">optimization achieved · −{pctText}%</span>

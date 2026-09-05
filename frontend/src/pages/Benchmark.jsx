@@ -26,10 +26,19 @@ export default function Benchmark() {
   const [filter, setFilter] = useState('all')
   const [revealKey, setRevealKey] = useState(0)
 
-  const loadLatest = () => api.benchmarkLatest().then((d) => { setLatest(d); setRevealKey((k) => k + 1) }).catch(() => {})
+  const loadLatest = (bump = true) => api.benchmarkLatest().then((d) => {
+    setLatest((prev) => {
+      // Only re-reveal when a genuinely new run arrived (different finished_at).
+      if (bump && prev && prev.finished_at !== d.finished_at) setRevealKey((k) => k + 1)
+      return d
+    })
+  }).catch(() => {})
   useEffect(() => {
     api.benchmarkQueries().then(setInfo).catch((e) => setErr(String(e)))
     loadLatest()
+    // Live refresh: pick up benchmark runs finished elsewhere (e.g. another tab).
+    const t = setInterval(() => loadLatest(false), 8000)
+    return () => clearInterval(t)
   }, [])
 
   const run = async (limit, baselineQualityMode = 'sampled') => {

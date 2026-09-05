@@ -45,10 +45,17 @@ export default function CommandCenter() {
   const [err, setErr] = useState('')
 
   useEffect(() => {
-    Promise.all([api.analytics(), api.routingStats()])
-      .then(([x, y]) => { setA(x); setStats(y) })
-      .catch((e) => setErr(String(e)))
+    let alive = true
+    const load = () => {
+      Promise.all([api.analytics(), api.routingStats()])
+        .then(([x, y]) => { if (alive) { setA(x); setStats(y) } })
+        .catch((e) => { if (alive) setErr(String(e)) })
+    }
+    load()
     api.benchmarkLatest().then(setBench).catch(() => {})
+    // Live refresh: keep the dashboard in sync with new Playground/benchmark traffic.
+    const t = setInterval(load, 5000)
+    return () => { alive = false; clearInterval(t) }
   }, [])
 
   if (err) return <Err>{err}</Err>
@@ -95,7 +102,7 @@ export default function CommandCenter() {
 
   return (
     <div className="fade-in">
-      <div className="status-strip"><span className="live-dot" />LIVE OPERATIONS <span>·</span> analytics from current request history</div>
+      <div className="status-strip"><span className="live-dot" />LIVE OPERATIONS <span>·</span> analytics from current request history <span className="live-refresh">auto-refreshing</span></div>
       <div className="kpis">
         <KPI label="Cost saved" value={usd(savings)} sub={`${pct(savingsPct.toFixed ? savingsPct.toFixed(1) : savingsPct)} vs always-best`} tone="up" />
         <KPI label="Quality" value={quality.opt != null ? `${(quality.opt * 100).toFixed(1)}%` : '–'} sub={quality.kept != null ? `${(quality.kept * 100).toFixed(1)}% of baseline ${quality.base != null ? (quality.base * 100).toFixed(1) + '%' : ''}` : 'live average'} />
@@ -137,12 +144,13 @@ export default function CommandCenter() {
                   <XAxis dataKey="name" hide />
                   <YAxis tickFormatter={(v) => `$${v.toFixed(3)}`} width={64} axisLine={false} tickLine={false} />
                   <Tooltip content={<Tip />} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Area
                     type="monotone"
                     dataKey="baseline"
                     name="Always-best"
-                    stroke="#d1d5db"
-                    fill="#f3f4f6"
+                    stroke="#2563eb"
+                    fill="#dbeafe"
                     strokeWidth={1.6}
                     animationBegin={250}
                     animationDuration={1400}
@@ -151,8 +159,8 @@ export default function CommandCenter() {
                     type="monotone"
                     dataKey="optimizer"
                     name="Optimizer"
-                    stroke="#0a0c10"
-                    fill="#e5e7eb"
+                    stroke="#059669"
+                    fill="#d1fae5"
                     strokeWidth={1.8}
                     animationBegin={700}
                     animationDuration={1400}

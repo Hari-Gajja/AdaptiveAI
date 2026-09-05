@@ -32,8 +32,15 @@ export default function App() {
   const [analytics, setAnalytics] = useState(null)
 
   useEffect(() => {
-    api.health().then(setHealth).catch(() => setHealth({ status: 'down' }))
-    api.analytics().then(setAnalytics).catch(() => {})
+    let alive = true
+    const load = () => {
+      api.health().then((h) => { if (alive) setHealth(h) }).catch(() => { if (alive) setHealth({ status: 'down' }) })
+      api.analytics().then((x) => { if (alive) setAnalytics(x) }).catch(() => {})
+    }
+    load()
+    // Live refresh: keep the sidebar store badge and backend status current.
+    const t = setInterval(load, 5000)
+    return () => { alive = false; clearInterval(t) }
   }, [])
 
   const active = NAV.find(([k]) => k === tab)
@@ -76,7 +83,7 @@ export default function App() {
           </div>
           <div style={{ marginTop: 5 }}>
             Store: {analytics ? analytics.mode : '—'}
-            {health && health.models ? ` · ${health.models.length} models` : ''}
+            {health && health.enabled ? ` · ${health.enabled.length} models enabled` : ''}
           </div>
           <div style={{ marginTop: 8, fontSize: 11, color: 'var(--faint)' }}>
             Every number on this screen is measured by the live backend.
@@ -95,7 +102,7 @@ export default function App() {
           <div className="spacer" />
           {health && health.status === 'ok' && (
             <span className="store-badge">
-              <span className="dot ok" />{health.models?.length || 0} models · phase {health.phase}
+              <span className="dot ok" />{health.enabled?.length || 0} models enabled · phase {health.phase}
             </span>
           )}
         </div>

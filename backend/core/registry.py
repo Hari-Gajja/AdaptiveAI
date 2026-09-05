@@ -34,6 +34,19 @@ KNOWN_CONTEXT = {
     "glm-5.3-flash": 1_000_000,
     "mimo-v2.5": 1_000_000,
     "mimo-v2.5-pro": 1_000_000,
+    "kimi-k2.6": 256_000,
+    "kimi-k2.7-code": 256_000,
+    "kimi-k3": 256_000,
+    "longcat-2.0": 128_000,
+    "hy3": 128_000,
+    "hy4-preview": 200_000,
+    "omen-alpha": 200_000,
+    "qwen3.8-flash": 1_000_000,
+    "qwen3.8-max": 262_144,
+    "minimax-m2.7": 200_000,
+    "minimax-m3": 1_000_000,
+    "gpt-5.6-luna": 400_000,
+    "grok-4.6": 2_000_000,
 }
 DEFAULT_CONTEXT = 200_000
 

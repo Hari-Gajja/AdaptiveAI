@@ -8,7 +8,12 @@ export default function CachePage() {
   const [err, setErr] = useState('')
 
   const load = () => api.cacheStats().then(setStats).catch((e) => setErr(String(e)))
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    // Live refresh: cache stats change as Playground traffic flows in.
+    const t = setInterval(load, 5000)
+    return () => clearInterval(t)
+  }, [])
 
   const clear = async () => { await api.cacheStats(); try { await fetch('/api/cache/clear', { method: 'POST' }); load() } catch (e) { setErr(String(e)) } }
 
