@@ -475,8 +475,9 @@ body {
 .flow-node.cached { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan-bg); }
 .flow-node.warning { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-bg); }
 
-/* Scatter dots entrance */
-.qc-dot { animation: fadeUp .5s var(--ease) both; }
+/* Scatter dots entrance — opacity only, never transform (recharts positions dots via translate on the same element) */
+.qc-dot { opacity: 0; animation: qcFadeIn .6s var(--ease) both; }
+@keyframes qcFadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* Reduced motion: kill everything added above */
 @media (prefers-reduced-motion: reduce) {
