@@ -69,20 +69,16 @@ React (Vite) ──REST──▶ FastAPI ──▶ Optimizer ──┬──▶ 
 
 ## Latest measured result
 
-Full 50-query run, 2026-09-04 (stored document: `GET /api/benchmark/latest`):
+The dashboard and this README never hard-code benchmark numbers. Every metric
+shown is the latest stored run:
 
-| Metric | Value |
-|---|---|
-| Baseline (always `deepseek-v4-pro`) cost | $0.016776 (counterfactual) |
-| Optimizer cost | $0.008914 (measured) |
-| Saved | $0.007862 (46.86%) |
-| Optimizer quality | 0.716 (reference-scored, all 50) |
-| Baseline quality | 0.605 (measured, deterministic n=5 sample) |
-| Quality retention | 118.3% (verify-and-escalate beats single-shot best) |
-| Routing | flash 29 / pro 21 · escalation 62% · cache hits 12% |
-
-Re-run any time from Benchmark Lab; the dashboard always shows the latest
-stored result, never hard-coded numbers.
+- **Dashboard** — Benchmark Lab tab reads `GET /api/benchmark/latest` (the most
+  recent stored document) and refreshes on every new run.
+- **CLI / scripts** — `GET /api/benchmark/latest` returns the full payload:
+  baseline vs optimizer cost, quality (reference-scored), retention, routing
+  mix, escalation and cache-hit rates.
+- **Re-run any time** from Benchmark Lab; the stored document is replaced and
+  every consumer updates automatically.
 
 ## Setup
 
