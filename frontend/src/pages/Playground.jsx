@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Badge, Card, CardHead, Err } from '../components/ui'
+import { AlertTriangle, CheckCircle2, Cpu, Zap } from 'lucide-react'
+import { Badge, Card, CardHead, Err, QualityGauge } from '../components/ui'
 import { Flow, FlowLink } from '../components/flow'
 import { api, usd } from '../services/api'
 
@@ -116,52 +117,91 @@ export default function Playground() {
         {res ? (
           <Card className="trace fade-in">
             <CardHead title="Decision trace" sub={`capability source: ${res.capability_source}`} />
-            <Flow
-              nodes={[
+            {res.escalated && (
+              <div className="escalation-banner">
+                <AlertTriangle size={14} />
+                <span>Escalation story: the first model fell below the quality bar, so the optimizer re-routed to a stronger capable model and re-verified.</span>
+              </div>
+            )}
+            {res.cache_hit && (
+              <div className="cache-banner">
+                <Zap size={14} />
+                <span>{res.cache_kind === 'exact' ? 'Cache hit: answer returned from the store — no LLM call, cost fully avoided.' : 'Context cache hit: reusable context restored, only the new question generated.'}</span>
+              </div>
+            )}
+            <div className="trace-seq">
+              {([
                 {
-                  title: 'Analyze',
-                  sub: `${res.analysis.task_type} · difficulty ${res.analysis.difficulty_score} · confidence ${res.analysis.confidence}`,
+                  key: 'analyze',
+                  node: {
+                    title: 'Analyze',
+                    sub: `${res.analysis.task_type} · difficulty ${res.analysis.difficulty_score} · confidence ${res.analysis.confidence}`,
+                    icon: <Cpu size={14} />,
+                  },
                 },
                 {
-                  title: 'Route',
-                  sub: `${res.routing.selected_model} selected`,
-                  body: (
-                    <div style={{ marginTop: 10, textAlign: 'left' }}>
-                      {(res.routing.candidates || []).map((c) => (
-                        <div key={c.model_id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '3px 0', color: c.qualifies ? 'var(--text)' : 'var(--faint)' }}>
-                          <span>{c.qualifies ? '✓' : '✗'} {c.model_id}</span>
-                          <span className="num">{usd(c.expected_cost_usd)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ),
-                },
-                {
-                  title: 'Verify',
-                  sub: res.attempts?.length
-                    ? res.attempts.map((a) => `${a.model_id} ${a.quality} ${a.passed ? '✓' : '✗'}`).join(' → ')
-                    : 'served from cache',
-                  body: res.attempts?.length
-                    ? (
-                      <div style={{ marginTop: 8 }}>
-                        <div className="bar">
-                          <i style={{ width: `${Math.min(100, (res.quality_score || 0) * 100)}%`, background: (res.quality_score || 0) >= 0.75 ? 'var(--good)' : 'var(--warn)' }} />
-                        </div>
-                        <div className="muted" style={{ marginTop: 4 }}>threshold 0.75</div>
+                  key: 'route',
+                  node: {
+                    title: 'Route',
+                    sub: `${res.routing.selected_model} selected`,
+                    icon: <Zap size={14} />,
+                    body: (
+                      <div style={{ marginTop: 10, textAlign: 'left' }}>
+                        {(res.routing.candidates || []).map((c, ci) => (
+                          <div
+                            key={c.model_id}
+                            className={`cand-row${c.model_id === res.routing.selected_model ? ' cand-sel' : ''}`}
+                            style={{ '--d': `${300 + ci * 110}ms` }}
+                          >
+                            <span>{c.qualifies ? '✓' : '✗'} {c.model_id}{c.model_id === res.routing.selected_model ? ' ← selected' : ''}</span>
+                            <span className="num">{usd(c.expected_cost_usd)}</span>
+                          </div>
+                        ))}
                       </div>
-                    )
-                    : null,
+                    ),
+                  },
                 },
                 {
-                  title: 'Respond',
-                  sub: `${usd(res.actual_cost_usd)} actual · ${res.savings_pct}% below always-best${res.escalated ? ' · escalated' : ''}`,
+                  key: 'verify',
+                  node: {
+                    title: 'Verify',
+                    sub: res.attempts?.length
+                      ? res.attempts.map((a) => `${a.model_id} ${a.quality} ${a.passed ? '✓' : '✗'}`).join(' → ')
+                      : 'served from cache',
+                    status: res.verification_status === 'verified' || res.verification_status === 'escalated_and_verified' ? 'success' : res.verification_status === 'cached' ? 'cached' : 'warning',
+                    icon: res.verification_status === 'verified' || res.verification_status === 'escalated_and_verified' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />,
+                    body: res.attempts?.length
+                      ? (
+                        <div style={{ marginTop: 8 }}>
+                          <div className="trace-quality"><QualityGauge value={res.quality_score} threshold={res.quality_threshold} method={res.quality_method} /><span>{res.verification_status}</span></div>
+                          <div className="bar">
+                            <i style={{ width: `${Math.min(100, (res.quality_score || 0) * 100)}%`, background: (res.quality_score || 0) >= res.quality_threshold ? 'var(--good)' : 'var(--warn)' }} />
+                          </div>
+                          <div className="muted" style={{ marginTop: 4 }}>threshold {res.quality_threshold} · {res.quality_detail || res.quality_method}</div>
+                        </div>
+                      )
+                      : null,
+                  },
                 },
-              ]}
-            />
+                {
+                  key: 'respond',
+                  node: {
+                    title: 'Respond',
+                    sub: `${usd(res.actual_cost_usd)} actual · ${res.savings_pct}% below always-best${res.escalated ? ' · escalated' : ''}`,
+                    status: res.verification_status === 'verified' || res.verification_status === 'escalated_and_verified' ? 'success' : 'warning',
+                  },
+                },
+              ].map(({ key, node }, i) => (
+                <div key={key} className="trace-step" style={{ '--d': `${i * 190}ms` }}>
+                  <Flow nodes={[node]} />
+                  {i < 3 && <FlowLink />}
+                </div>
+              )))}
+            </div>
             <div style={{ marginTop: 16, borderTop: '1px solid var(--line-soft)', paddingTop: 12 }}>
               <div className="section-title" style={{ marginBottom: 8 }}>Why this route</div>
               {(res.decision_reason || []).map((r, i) => (
-                <div key={i} className="muted" style={{ padding: '2px 0', lineHeight: 1.5 }}>· {r}</div>
+                <div key={i} className="reason-line" style={{ '--d': `${400 + i * 220}ms` }}>· {r}</div>
               ))}
             </div>
           </Card>

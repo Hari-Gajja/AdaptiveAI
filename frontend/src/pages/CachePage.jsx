@@ -25,6 +25,18 @@ export default function CachePage() {
         <KPI label="Entries" value={stats.entries} sub="cached responses + contexts" />
       </div>
 
+      <Card className="cache-hero" style={{ marginTop: 18 }}>
+        <div className="cache-meter" style={{ '--cache-rate': `${Math.max(0, Math.min(1, stats.hit_rate || 0)) * 100}%` }}>
+          <div><strong>{(stats.hit_rate * 100).toFixed(0)}%</strong><span>hit rate</span></div>
+        </div>
+        <div>
+          <div className="section-title">Cache performance</div>
+          <h2 className="cache-title">Reuse context. Skip repeat work.</h2>
+          <p className="muted">Exact hits skip generation entirely. Context hits keep the question fresh while measuring avoided reusable tokens as estimated savings.</p>
+          <div className="row"><Badge tone="good">{stats.exact_hits} exact hits</Badge><Badge tone="blue">{stats.context_hits} context hits</Badge><Badge>{stats.misses} misses</Badge></div>
+        </div>
+      </Card>
+
       <div className="grid side" style={{ marginTop: 18 }}>
         <Card>
           <CardHead
@@ -40,11 +52,13 @@ export default function CachePage() {
                 title: 'Hit',
                 sub: `exact: return stored answer · measured ${usd(stats.exact_saved_measured_usd)}`,
                 body: <Badge tone="good">no LLM call</Badge>,
+                status: 'cached',
               },
               {
                 title: 'Context hit',
                 sub: `same reusable context, new question · estimated ${usd(stats.context_saved_estimated_usd)}`,
                 body: <Badge tone="warn">generate, count avoided tokens</Badge>,
+                status: 'warning',
               },
               { title: 'Miss', sub: 'route → generate → verify → store', branch: true },
             ]}

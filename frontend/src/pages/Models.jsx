@@ -1,8 +1,31 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Badge, Card, CardHead, Err } from '../components/ui'
+import { Badge, Card, CardHead, Err, Skeleton } from '../components/ui'
 import { api } from '../services/api'
 
 const CATS = ['reasoning', 'coding', 'math', 'summarization', 'long_context', 'general']
+
+/** One capability bar that fills from 0 with a staggered delay. */
+function CapBar({ label, value, delay, measured }) {
+  const target = Number.isFinite(Number(value)) ? Number(value) * 100 : 0
+  const [w, setW] = useState(0)
+  useEffect(() => {
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduced) { setW(target); return undefined }
+    const t = setTimeout(() => setW(target), delay)
+    return () => clearTimeout(t)
+  }, [target, delay])
+  return (
+    <div className="cap-bar-row" style={{ '--d': `${delay}ms` }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 3 }}>
+        <span className="muted" style={{ textTransform: 'capitalize' }}>{label}</span>
+        <span className="num" style={{ fontWeight: 600 }}>{value != null ? Number(value).toFixed(2) : '–'}</span>
+      </div>
+      <div className="bar">
+        <i style={{ width: `${w}%` }} className={measured ? 'cap-measured' : 'cap-estimated'} />
+      </div>
+    </div>
+  )
+}
 
 export default function Models() {
   const [models, setModels] = useState([])
@@ -13,10 +36,12 @@ export default function Models() {
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState('model_id')
   const [expanded, setExpanded] = useState(null)
+  const [loaded, setLoaded] = useState(false)
 
   const load = () => {
     api.models().then((d) => setModels(d.models)).catch((e) => setErr(String(e)))
     api.profiles().then((d) => setProfiles(d.profiles)).catch(() => {})
+    setLoaded(true)
   }
   useEffect(load, [])
 
@@ -88,6 +113,11 @@ export default function Models() {
             Last run measured {Object.keys(job.results).length} model(s) on our benchmark.
           </p>
         )}
+        {!loaded ? (
+          <div style={{ padding: '8px 0' }}>
+            {[0, 1, 2, 3].map((i) => <Skeleton key={i} h={34} style={{ marginBottom: 8 }} />)}
+          </div>
+        ) : (
         <div className="tbl-wrap">
           <table className="tbl">
             <thead>
@@ -101,68 +131,77 @@ export default function Models() {
               </tr>
             </thead>
             <tbody>
-{rows.map((m) => {
+              {rows.map((m, ri) => {
                 const p = m.prof
                 const isOpen = expanded === m.model_id
                 return (
                   <React.Fragment key={m.model_id}>
-                    <tr key={m.model_id} style={{ opacity: m.enabled ? 1 : 0.5, cursor: 'pointer' }} onClick={() => setExpanded(isOpen ? null : m.model_id)}>
-                          <td>
-                            <div style={{ fontWeight: 600 }}>{m.model_id}</div>
-                            <div className="muted" style={{ fontSize: 12 }}>{m.endpoint_family} · {(m.context_window / 1000).toFixed(0)}k ctx</div>
-                          </td>
-                          <td>
-                            <Badge tone={p && p.measured ? 'good' : 'warn'}>
-                              {p && p.measured ? 'measured' : 'estimated'}
-                            </Badge>
-                          </td>
-                          <td className="num">{m.pricing_status === 'unavailable' ? 'N/A' : `$${m.input_per_1M}`}</td>
-                          <td className="num">{m.pricing_status === 'unavailable' ? 'N/A' : `$${m.output_per_1M}`}</td>
-                          {CATS.map((c) => (
-                            <td key={`${m.model_id}-${c}`} className="num">{p && p.capabilities[c] != null ? p.capabilities[c].toFixed(2) : '–'}</td>
-                          ))}
-                          <td onClick={(e) => e.stopPropagation()}>
-                            <button className="btn subtle sm" onClick={() => toggle(m)}>{m.enabled ? 'Disable' : 'Enable'}</button>
-                          </td>
-                        </tr>
-                        {isOpen && (
-                          <tr key={`${m.model_id}-detail`}>
-                            <td colSpan={9} style={{ background: 'var(--bg-soft)' }}>
-                              <div className="grid two" style={{ gap: 14 }}>
-                                <div>
-                                  <div className="section-title" style={{ marginBottom: 8 }}>Capability profile</div>
-                                  {CATS.map((c) => (
-                                    <div key={`${m.model_id}-${c}`} style={{ marginBottom: 6 }}>
-                                      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 2 }}>
-                                        <span className="muted" style={{ textTransform: 'capitalize' }}>{c.replace('_', ' ')}</span>
-                                        <span className="num">{p && p.capabilities[c] != null ? p.capabilities[c].toFixed(2) : '–'}</span>
-                                      </div>
-                                      <div className="bar"><i style={{ width: `${(p && p.capabilities[c] != null ? p.capabilities[c] : 0) * 100}%` }} /></div>
-                                    </div>
-                                  ))}
+                    <tr
+                      className={`model-row${isOpen ? ' open' : ''}${m.enabled ? '' : ' dimmed'}`}
+                      style={{ '--d': `${Math.min(ri * 60, 480)}ms`, cursor: 'pointer' }}
+                      onClick={() => setExpanded(isOpen ? null : m.model_id)}
+                    >
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{m.model_id}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>{m.endpoint_family} · {(m.context_window / 1000).toFixed(0)}k ctx</div>
+                      </td>
+                      <td>
+                        {p && p.measured
+                          ? <Badge tone="good" title={`measured${p.measured_at ? ` ${new Date(p.measured_at).toLocaleDateString()}` : ''}`}>✓ measured</Badge>
+                          : <Badge tone="warn" title="estimated prior — run profiling to measure">≈ estimated</Badge>}
+                      </td>
+                      <td className="num">{m.pricing_status === 'unavailable' ? 'N/A' : `$${m.input_per_1M}`}</td>
+                      <td className="num">{m.pricing_status === 'unavailable' ? 'N/A' : `$${m.output_per_1M}`}</td>
+                      {CATS.map((c) => (
+                        <td key={`${m.model_id}-${c}`} className="num">{p && p.capabilities[c] != null ? p.capabilities[c].toFixed(2) : '–'}</td>
+                      ))}
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <button className="btn subtle sm" onClick={() => toggle(m)}>{m.enabled ? 'Disable' : 'Enable'}</button>
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="detail-row">
+                        <td colSpan={9}>
+                          <div className="detail-inner" style={{ background: 'var(--bg-soft)' }}>
+                            <div className="grid two" style={{ gap: 14 }}>
+                              <div>
+                                <div className="section-title" style={{ marginBottom: 8 }}>
+                                  Capability profile {p && p.measured ? <Badge tone="good" style={{ marginLeft: 6 }}>measured</Badge> : <Badge tone="warn" style={{ marginLeft: 6 }}>estimated</Badge>}
                                 </div>
-                                <div>
-                                  <div className="section-title" style={{ marginBottom: 8 }}>Details</div>
-                                  <div className="trace">
-                                    <div className="t-step"><span className="t-key">Provider</span><span className="t-val">{m.provider}</span></div>
-                                    <div className="t-step"><span className="t-key">Endpoint</span><span className="t-val mono">{m.endpoint_family}</span></div>
-                                    <div className="t-step"><span className="t-key">Context</span><span className="t-val num">{m.context_window.toLocaleString()} tokens</span></div>
-                                    <div className="t-step"><span className="t-key">Profile</span><span className="t-val">{m.profile_status}{p && p.measured_at ? ` · ${new Date(p.measured_at).toLocaleString()}` : ''}</span></div>
-                                  </div>
+                                {CATS.map((c, ci) => (
+                                  <CapBar
+                                    key={`${m.model_id}-${c}`}
+                                    label={c.replace('_', ' ')}
+                                    value={p && p.capabilities[c] != null ? p.capabilities[c] : null}
+                                    delay={ci * 110}
+                                    measured={p && p.measured}
+                                  />
+                                ))}
+                              </div>
+                              <div>
+                                <div className="section-title" style={{ marginBottom: 8 }}>Details</div>
+                                <div className="trace">
+                                  <div className="t-step"><span className="t-key">Provider</span><span className="t-val">{m.provider}</span></div>
+                                  <div className="t-step"><span className="t-key">Endpoint</span><span className="t-val mono">{m.endpoint_family}</span></div>
+                                  <div className="t-step"><span className="t-key">Context</span><span className="t-val num">{m.context_window.toLocaleString()} tokens</span></div>
+                                  <div className="t-step"><span className="t-key">Profile</span><span className="t-val">{m.profile_status}{p && p.measured_at ? ` · ${new Date(p.measured_at).toLocaleString()}` : ''}</span></div>
                                 </div>
                               </div>
-                            </td>
-                          </tr>
-                        )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                   </React.Fragment>
                 )
               })}
             </tbody>
           </table>
         </div>
+        )}
       </Card>
 
-      <Card style={{ marginTop: 18 }}>
+      <Card style={{ marginTop: 18 }} className="fade-in">
         <CardHead title="Add model" sub="Pricing auto-fills from the known table when left blank." />
         <div className="grid three">
           <input className="input" placeholder="model_id (e.g. kimi-k2.7-code)" value={form.model_id} onChange={(e) => setForm({ ...form, model_id: e.target.value })} />

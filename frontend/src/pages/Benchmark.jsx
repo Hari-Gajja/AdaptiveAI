@@ -3,14 +3,30 @@ import { Badge, Card, CardHead, Empty, Err, KPI, SkeletonKPIs } from '../compone
 import { CostCompare } from '../components/flow'
 import { api, pct, usd } from '../services/api'
 
+/** Phased reveal: each phase mounts after the previous one, gated on real data. */
+function usePhased(count, step = 260, enabled = true) {
+  const [phase, setPhase] = useState(enabled ? 0 : count)
+  useEffect(() => {
+    if (!enabled) { setPhase(count); return undefined }
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduced) { setPhase(count); return undefined }
+    setPhase(0)
+    const timers = []
+    for (let i = 1; i <= count; i++) timers.push(setTimeout(() => setPhase(i), i * step))
+    return () => timers.forEach(clearTimeout)
+  }, [count, step, enabled])
+  return phase
+}
+
 export default function Benchmark() {
   const [info, setInfo] = useState(null)
   const [job, setJob] = useState(null)
   const [latest, setLatest] = useState(null)
   const [err, setErr] = useState('')
   const [filter, setFilter] = useState('all')
+  const [revealKey, setRevealKey] = useState(0)
 
-  const loadLatest = () => api.benchmarkLatest().then(setLatest).catch(() => {})
+  const loadLatest = () => api.benchmarkLatest().then((d) => { setLatest(d); setRevealKey((k) => k + 1) }).catch(() => {})
   useEffect(() => {
     api.benchmarkQueries().then(setInfo).catch((e) => setErr(String(e)))
     loadLatest()
@@ -33,6 +49,8 @@ export default function Benchmark() {
   const rows = (latest && latest.per_query) || []
   const shown = filter === 'all' ? rows : rows.filter((q) => q.category === filter)
   const progress = job && job.status === 'running' ? Math.min(1, (job.done || 0) / Math.max(1, job.total || 1)) : null
+  const hasLatest = !!latest
+  const phase = usePhased(4, 300, hasLatest)
 
   return (
     <div className="fade-in">
@@ -52,6 +70,11 @@ export default function Benchmark() {
             </div>
           }
         />
+        <div className={`benchmark-status ${job?.status === 'running' ? 'running' : job?.status === 'error' ? 'failed' : latest ? 'completed' : 'idle'}`}>
+          <span className="status-led" />
+          {job?.status === 'running' ? 'RUNNING' : job?.status === 'error' ? 'FAILED' : latest ? 'COMPLETED' : 'READY'}
+          {latest?.finished_at && <span className="muted">· {new Date(latest.finished_at).toLocaleString()}</span>}
+        </div>
         {info && (
           <div className="row" style={{ gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <Badge>{info.count} queries</Badge>
@@ -74,7 +97,8 @@ export default function Benchmark() {
       </Card>
 
       {latest ? (
-        <div style={{ marginTop: 18 }}>
+        <div style={{ marginTop: 18 }} key={revealKey}>
+          <div className={`phase phase-1${phase >= 1 ? ' in' : ''}`}>
           <div className="kpis">
             <KPI label="Queries" value={latest.queries_tested} sub="reference-scored" />
             <KPI label="Always-best" value={usd(latest.baseline_cost)} sub={`${latest.baseline_model} · ${latest.baseline_quality_mode || 'sampled'} quality`} />
@@ -83,7 +107,9 @@ export default function Benchmark() {
             <KPI label="Cache hits" value={`${(latest.cache_hit_rate * 100).toFixed(0)}%`} sub="exact + context" />
             <KPI label="Escalations" value={`${(latest.escalation_rate * 100).toFixed(0)}%`} sub={`${latest.escalation_count ?? Math.round(latest.escalation_rate * latest.queries_tested)} · avg ${latest.avg_latency_ms} ms`} />
           </div>
+          </div>
 
+          <div className={`phase phase-2${phase >= 2 ? ' in' : ''}`}>
           <Card style={{ marginTop: 18 }}>
             <CardHead title="Validation metrics" sub="All values come from the stored benchmark run; unavailable values remain explicit." />
             <div className="kpis">
@@ -93,7 +119,9 @@ export default function Benchmark() {
               <KPI label="Median latency" value={latest.median_latency_ms != null ? `${latest.median_latency_ms} ms` : 'N/A'} sub="successful requests" />
             </div>
           </Card>
+          </div>
 
+          <div className={`phase phase-3${phase >= 3 ? ' in' : ''}`}>
           <div className="grid two" style={{ marginTop: 18 }}>
             <Card>
               <CardHead title="Cost comparison" sub="Counterfactual baseline vs actual spend." />
@@ -109,10 +137,10 @@ export default function Benchmark() {
                 )}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {Object.entries(latest.model_distribution || {}).map(([m, n]) => {
+                {Object.entries(latest.model_distribution || {}).map(([m, n], di) => {
                   const total = Object.values(latest.model_distribution).reduce((s, x) => s + x, 0)
                   return (
-                    <div key={m}>
+                    <div key={m} className="distribution-row" style={{ '--d': `${di * 90}ms` }}>
                       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
                         <span style={{ fontSize: 13 }}>{m}</span>
                         <span className="num muted">{total ? Math.round((n / total) * 100) : 0}%</span>
@@ -124,7 +152,9 @@ export default function Benchmark() {
               </div>
             </Card>
           </div>
+          </div>
 
+          <div className={`phase phase-4${phase >= 4 ? ' in' : ''}`}>
           <Card style={{ marginTop: 18 }}>
             <CardHead
               title="Per-query trace"
@@ -144,8 +174,8 @@ export default function Benchmark() {
                   <tr><th>#</th><th>Category</th><th>Selected → final</th><th>Quality</th><th>Cost</th><th>Tokens</th><th>Flags</th></tr>
                 </thead>
                 <tbody>
-                  {shown.map((q) => (
-                    <tr key={q.id}>
+                  {shown.map((q, qi) => (
+                    <tr key={q.id} className="trace-row" style={{ '--d': `${Math.min(qi * 35, 700)}ms` }}>
                       <td className="num">{q.id}</td>
                       <td>{q.category}</td>
                       <td>{q.status === 'failed' ? <Badge tone="bad">failed</Badge> : <><span className="muted">{q.selected_model}</span> → <b>{q.final_model}</b></>}</td>
@@ -162,6 +192,7 @@ export default function Benchmark() {
               </table>
             </div>
           </Card>
+          </div>
         </div>
       ) : (
         !job && <div style={{ marginTop: 18 }}><SkeletonKPIs n={6} /><Card style={{ marginTop: 18 }}><Empty title="No benchmark yet">Run the full benchmark to produce measured savings and quality numbers.</Empty></Card></div>
