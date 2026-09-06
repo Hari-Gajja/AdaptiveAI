@@ -140,8 +140,8 @@ export default function Benchmark() {
           <div className="kpis">
             <KPI label="Queries" value={latest.queries_tested} sub={`mode: ${latest.mode || 'full_optimizer'}`} />
             <KPI label="Always-best" value={usd(latest.baseline_cost)} sub={`${latest.baseline_model} · ${latest.baseline_quality_mode || 'sampled'} quality`} />
-            <KPI label="Optimizer" value={usd(latest.optimizer_cost)} sub={`saved ${usd(latest.savings)} (${pct(latest.savings_pct)})`} tone="up" />
-            <KPI label="Net saved (incl. CP)" value={usd(latest.net_savings ?? latest.savings)} sub={`CP overhead ${usd(latest.control_plane_cost_usd ?? 0)} · ${pct(latest.net_savings_pct ?? latest.savings_pct)}`} tone="up" />
+            <KPI label="Optimizer" value={usd(latest.optimizer_cost)} sub={`${(latest.savings_direction ?? (latest.savings < 0 ? 'loss' : 'savings')) === 'loss' ? 'costs more' : 'saved'} ${usd(Math.abs(latest.savings))} (${pct(latest.savings_pct)})`} tone={(latest.savings_direction ?? (latest.savings < 0 ? 'loss' : 'savings')) === 'loss' ? 'down' : 'up'} />
+            <KPI label="Net saved (incl. CP)" value={(latest.net_savings_direction ?? (latest.net_savings < 0 ? 'loss' : 'savings')) === 'loss' ? `−${usd(Math.abs(latest.net_savings ?? latest.savings))}` : usd(latest.net_savings ?? latest.savings)} sub={`CP overhead ${usd(latest.control_plane_cost_usd ?? 0)} · ${pct(latest.net_savings_pct ?? latest.savings_pct)}`} tone={(latest.net_savings_direction ?? (latest.net_savings < 0 ? 'loss' : 'savings')) === 'loss' ? 'down' : 'up'} />
             <KPI label="Quality" value={`${(latest.optimizer_quality * 100).toFixed(1)}%`} sub={`baseline ${latest.baseline_quality != null ? (latest.baseline_quality * 100).toFixed(1) + '%' : 'N/A'} · retained ${latest.quality_retention != null ? (latest.quality_retention * 100).toFixed(1) + '%' : 'N/A'}`} />
             <KPI label="Cache hits" value={`${(latest.cache_hit_rate * 100).toFixed(0)}%`} sub="exact + context" />
             <KPI label="Escalations" value={`${(latest.escalation_rate * 100).toFixed(0)}%`} sub={`${latest.escalation_count ?? Math.round(latest.escalation_rate * latest.queries_tested)} · avg ${latest.avg_latency_ms} ms`} />
@@ -193,7 +193,7 @@ export default function Benchmark() {
           <div className="grid two" style={{ marginTop: 18 }}>
             <Card>
               <CardHead title="Cost comparison" sub="Counterfactual baseline vs actual spend." />
-              <CostCompare baseline={latest.baseline_cost} optimizer={latest.optimizer_cost} savings={latest.savings} savingsPct={latest.savings_pct} />
+              <CostCompare baseline={latest.baseline_cost} optimizer={latest.optimizer_cost} savings={latest.savings} savingsPct={latest.savings_pct} netSavings={latest.net_savings} netSavingsPct={latest.net_savings_pct} direction={latest.savings_direction} />
             </Card>
             <Card>
               <CardHead title="Quality guardrail" sub="Cost savings that survive verification." />

@@ -165,6 +165,7 @@ body {
 .kpi .k-sub .down { color: var(--bad); font-weight: 600; }
 .kpi:hover { box-shadow: var(--shadow-md); }
 .kpi-up .k-value { color: var(--good); }
+.kpi-down .k-value { color: var(--bad); }
 .good-text { color: var(--good); }
 .model-dot { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; vertical-align: 1px; }
 .distribution-row { animation: fadeUp 0.45s var(--ease) both; }
@@ -423,6 +424,15 @@ body {
 .cc-label-save { color: var(--good); }
 .cc-opt-num { color: var(--good); }
 .cc-savings-num { color: var(--good); }
+/* Loss state: optimizer costs MORE than the always-best baseline. Honest red. */
+.cc-label-loss { color: var(--bad); }
+.cc-opt-num-loss { color: var(--bad); }
+.cc-savings-num-loss { color: var(--bad); }
+.cc-opt-loss { background: linear-gradient(90deg, #fca5a5, var(--bad)); }
+.cc-gap-loss { background: linear-gradient(90deg, var(--bad-bg), var(--bad)); opacity: 0.85; }
+.savings-reveal-loss { color: var(--bad); }
+.savings-reveal-loss .savings-line { background: linear-gradient(90deg, var(--orange), var(--bad)); }
+.savings-reveal-loss .savings-line::after { content: "↑"; color: var(--bad); }
 
 /* Savings reveal delay override (uses --d) */
 .savings-reveal { animation-delay: var(--d, .75s); }
@@ -573,6 +583,9 @@ body {
 .pg-cost-opt { background: linear-gradient(90deg, #34d399, var(--good)); }
 .pg-cost-base { background: linear-gradient(90deg, #93c5fd, var(--blue)); }
 .pg-cost-val { font-size: 12.5px; color: var(--text-2); min-width: 58px; text-align: right; }
+.pg-cost-opt-loss { background: linear-gradient(90deg, #fca5a5, var(--bad)); }
+.pg-cost-saved-loss { color: var(--bad); }
+.pg-cost-saved-loss b { color: var(--bad); }
 .pg-cost-saved {
   display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12.5px; color: var(--good);
   animation: pgSavedIn .6s var(--ease) both; animation-delay: .4s;

@@ -85,6 +85,11 @@ class OptimizerResult:
     baseline_cost_usd: float | None = 0.0
     savings_usd: float | None = 0.0
     savings_pct: float | None = 0.0
+    savings_direction: str = "breakeven"  # savings | loss | breakeven | unavailable
+    # net savings = savings minus control-plane overhead (honest accounting)
+    net_savings_usd: float | None = 0.0
+    net_savings_pct: float | None = 0.0
+    net_savings_direction: str = "breakeven"
     cost_status: str = "measured"
     savings_status: str = "measured"
     quality_passed: bool = False
@@ -144,8 +149,19 @@ def escalation_order(candidates: list[CandidateView], tried: set[str],
 
 def _finish_costs(result: OptimizerResult, enabled: list[ModelEntry]) -> None:
     base = baseline_model(enabled)
-    in_tok = sum(a.input_tokens for a in result.attempts if a.input_tokens is not None) if all(a.input_tokens is not None for a in result.attempts) else None
-    out_tok = sum(a.output_tokens for a in result.attempts if a.output_tokens is not None) if all(a.output_tokens is not None for a in result.attempts) else None
+    # Honest counterfactual: the baseline model's cost for the tokens of the
+    # FINAL (kept) attempt only. Summing ALL attempts' tokens would inflate the
+    # baseline with failed-attempt tokens the baseline never actually sent —
+    # and then the optimizer's real spend (which DOES include failed attempts)
+    # could exceed it, making "savings" misleadingly negative.
+    final = result.attempts[-1] if result.attempts else None
+    if final is not None and final.input_tokens is not None and final.output_tokens is not None:
+        in_tok, out_tok = final.input_tokens, final.output_tokens
+    else:
+        in_tok = (sum(a.input_tokens for a in result.attempts if a.input_tokens is not None)
+                  if all(a.input_tokens is not None for a in result.attempts) else None)
+        out_tok = (sum(a.output_tokens for a in result.attempts if a.output_tokens is not None)
+                   if all(a.output_tokens is not None for a in result.attempts) else None)
     s = cost_summary(result.total_cost_usd, base, in_tok, out_tok, baseline_method(enabled))
     result.baseline_model = s["baseline_model"]
     result.baseline_method = s["baseline_method"]
@@ -154,6 +170,18 @@ def _finish_costs(result: OptimizerResult, enabled: list[ModelEntry]) -> None:
     result.savings_pct = s["savings_pct"]
     result.cost_status = s["actual_cost_status"]
     result.savings_status = s["savings_status"]
+    result.savings_direction = s["savings_direction"]
+    # Net savings = savings minus control-plane overhead (honest accounting:
+    # Total = Control Plane + Task Model). Can be negative — that's real.
+    cp_cost = result.ledger.total_cost_usd if result.ledger else 0.0
+    base_cost = result.baseline_cost_usd or 0.0
+    net = (result.savings_usd or 0.0) - cp_cost
+    result.net_savings_usd = round(net, 6)
+    result.net_savings_pct = (round(100.0 * net / base_cost, 2)
+                              if base_cost > 0 else 0.0)
+    result.net_savings_direction = ("savings" if net > 1e-9
+                                    else "loss" if net < -1e-9
+                                    else "breakeven")
 
 
 def run_prompt(

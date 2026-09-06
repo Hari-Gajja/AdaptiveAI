@@ -158,13 +158,24 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
             if progress:
                 progress(i + 1, len(queries))
             continue
-        in_tok = sum(a.input_tokens for a in res.attempts)
-        out_tok = sum(a.output_tokens for a in res.attempts)
-        total_in += in_tok
-        total_out += out_tok
-        b_cost = in_tok / 1e6 * base_entry.input_per_1M + out_tok / 1e6 * base_entry.output_per_1M
+        # Honest counterfactual: baseline cost on the FINAL (kept) attempt's
+        # tokens only — the always-best model would have made ONE call for the
+        # answer we kept. Summing ALL attempts' tokens inflates the baseline
+        # with failed-attempt tokens the baseline never sent.
+        final_att = res.attempts[-1] if res.attempts else None
+        if final_att is not None and final_att.input_tokens is not None and final_att.output_tokens is not None:
+            b_in, b_out = final_att.input_tokens, final_att.output_tokens
+        else:
+            b_in = sum(a.input_tokens for a in res.attempts if a.input_tokens is not None)
+            b_out = sum(a.output_tokens for a in res.attempts if a.output_tokens is not None)
+        b_cost = b_in / 1e6 * base_entry.input_per_1M + b_out / 1e6 * base_entry.output_per_1M
         opt_cost += res.total_cost_usd
         base_cost += b_cost
+        # Optimizer's own token totals (all attempts) for the per-query record.
+        in_tok = sum(a.input_tokens for a in res.attempts if a.input_tokens is not None)
+        out_tok = sum(a.output_tokens for a in res.attempts if a.output_tokens is not None)
+        total_in += in_tok
+        total_out += out_tok
         fq = res.final_quality
         if fq is not None:
             quals.append(fq.overall)
@@ -288,6 +299,9 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
         "baseline_cost_method": "counterfactual (measured tokens x baseline pricing)",
         "savings": round(savings, 6),
         "savings_pct": round(100.0 * savings / base_cost, 2) if base_cost > 0 else 0.0,
+        "savings_direction": ("savings" if savings > 1e-9
+                              else "loss" if savings < -1e-9
+                              else "breakeven"),
         # control-plane overhead + net (Total = Control Plane + Task Model)
         "control_plane_cost_usd": round(cp_cost, 6),
         "control_plane_tokens": cp_tokens,
@@ -296,6 +310,9 @@ def run_benchmark(queries: list[dict], baseline_sample_n: int = 5,
         "control_plane_fallbacks": cp_fallbacks,
         "net_savings": round(net_savings, 6),
         "net_savings_pct": round(100.0 * net_savings / base_cost, 2) if base_cost > 0 else 0.0,
+        "net_savings_direction": ("savings" if net_savings > 1e-9
+                                  else "loss" if net_savings < -1e-9
+                                  else "breakeven"),
         "optimizer_quality": opt_q,
         "optimizer_quality_method": "reference-scored, all queries",
         "baseline_quality": base_q,

@@ -82,8 +82,11 @@ function CostMini({ res }) {
   const opt = res.actual_cost_usd
   const base = res.baseline_cost_usd
   const saved = res.savings_usd
+  const net = res.net_savings_usd
   const hasCost = res.cost_status === 'measured' && opt != null
   const hasBase = base != null
+  const isLoss = (res.savings_direction === 'loss') || (saved != null && saved < 0)
+  const isNetLoss = net != null && net < 0
   const max = Math.max(opt || 0, base || 0, 1e-9)
   return (
     <div className="pg-cost">
@@ -93,7 +96,7 @@ function CostMini({ res }) {
       </div>
       <div className="pg-cost-row">
         <span className="pg-cost-label">Optimized</span>
-        <div className="pg-cost-track"><i className="pg-cost-fill pg-cost-opt" style={{ width: `${((opt || 0) / max) * 100}%` }} /></div>
+        <div className="pg-cost-track"><i className={`pg-cost-fill pg-cost-opt${isLoss ? ' pg-cost-opt-loss' : ''}`} style={{ width: `${((opt || 0) / max) * 100}%` }} /></div>
         <span className="pg-cost-val num">{hasCost ? usd(opt) : '–'}</span>
       </div>
       <div className="pg-cost-row">
@@ -101,10 +104,16 @@ function CostMini({ res }) {
         <div className="pg-cost-track"><i className="pg-cost-fill pg-cost-base" style={{ width: `${((base || 0) / max) * 100}%` }} /></div>
         <span className="pg-cost-val num">{hasBase ? usd(base) : '–'}</span>
       </div>
-      {saved != null && saved > 0 && (
-        <div className="pg-cost-saved">
-          <ArrowDownRight size={13} />
-          <span>Saved <b className="num">{usd(saved)}</b></span>
+      {saved != null && saved !== 0 && (
+        <div className={`pg-cost-saved${isLoss ? ' pg-cost-saved-loss' : ''}`}>
+          {isLoss ? <ArrowUp size={13} /> : <ArrowDownRight size={13} />}
+          <span>{isLoss ? 'Costs more than baseline ' : 'Saved '}<b className="num">{usd(Math.abs(saved))}</b></span>
+        </div>
+      )}
+      {net != null && net !== 0 && (
+        <div className={`pg-cost-saved${isNetLoss ? ' pg-cost-saved-loss' : ''}`} title="savings minus control-plane overhead">
+          {isNetLoss ? <ArrowUp size={13} /> : <ArrowDownRight size={13} />}
+          <span>Net (incl. CP) {isNetLoss ? '−' : ''}<b className="num">{usd(Math.abs(net))}</b></span>
         </div>
       )}
     </div>

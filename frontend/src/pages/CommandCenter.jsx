@@ -30,6 +30,10 @@ export default function CommandCenter() {
   const opt = src.optimizer_cost ?? src.total_cost_usd
   const savings = src.savings ?? src.savings_usd
   const savingsPct = src.savings_pct ?? (base ? (100 * (base - opt)) / base : 0)
+  const netSavings = src.net_savings_usd ?? (savings != null ? savings - (src.control_plane_cost_usd ?? 0) : null)
+  const netSavingsPct = src.net_savings_pct ?? (base ? (100 * (netSavings ?? 0)) / base : 0)
+  const savingsDir = src.savings_direction ?? (savings != null ? (savings > 0 ? 'savings' : savings < 0 ? 'loss' : 'breakeven') : 'unavailable')
+  const netDir = src.net_savings_direction ?? (netSavings != null ? (netSavings > 0 ? 'savings' : netSavings < 0 ? 'loss' : 'breakeven') : 'unavailable')
   const cacheRate = a.cache_hit_rate || 0
   const escRate = a.escalation_rate || 0
   const quality = { opt: a.avg_quality, base: null, kept: null }
@@ -49,8 +53,9 @@ export default function CommandCenter() {
   return (
     <div className="fade-in">
       <div className="status-strip"><span className="live-dot" />LIVE OPERATIONS <span>·</span> analytics from current request history <span className="live-refresh">auto-refreshing</span></div>
-      <div className="kpis kpis-5">
-        <KPI label="Cost saved" value={usd(savings)} sub={`${pct(savingsPct.toFixed ? savingsPct.toFixed(1) : savingsPct)} vs always-best`} tone="up" />
+      <div className="kpis kpis-6">
+        <KPI label="Cost saved" value={savingsDir === 'loss' ? `−${usd(Math.abs(savings))}` : usd(savings)} sub={`${pct(savingsPct.toFixed ? savingsPct.toFixed(1) : savingsPct)} vs always-best`} tone={savingsDir === 'loss' ? 'down' : 'up'} />
+        <KPI label="Net saved (incl. CP)" value={netDir === 'loss' ? `−${usd(Math.abs(netSavings))}` : usd(netSavings)} sub={`CP overhead ${usd(src.control_plane_cost_usd ?? 0)} · ${pct(netSavingsPct.toFixed ? netSavingsPct.toFixed(1) : netSavingsPct)}`} tone={netDir === 'loss' ? 'down' : 'up'} />
         <KPI label="Quality" value={quality.opt != null ? `${(quality.opt * 100).toFixed(1)}%` : '–'} sub={quality.kept != null ? `${(quality.kept * 100).toFixed(1)}% of baseline ${quality.base != null ? (quality.base * 100).toFixed(1) + '%' : ''}` : 'live average'} />
         <KPI label="Cache hit rate" value={`${(cacheRate * 100).toFixed(0)}%`} sub="exact + reusable-context hits" />
         <KPI label="Requests" value={a.total_requests} sub={`LIVE · store mode: ${a.mode}`} />
@@ -64,7 +69,7 @@ export default function CommandCenter() {
               title="LIVE cost: optimizer vs baseline"
               sub="Current request history. Baseline is counterfactual; benchmark results are shown in Benchmark Lab."
             />
-            <CostCompare baseline={base} optimizer={opt} savings={savings} savingsPct={savingsPct} />
+            <CostCompare baseline={base} optimizer={opt} savings={savings} savingsPct={savingsPct} netSavings={netSavings} netSavingsPct={netSavingsPct} direction={savingsDir} />
           </Card>
 
           <Card>

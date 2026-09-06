@@ -65,8 +65,15 @@ def cost_summary(actual_usd: float | None, baseline_entry: ModelEntry,
             "savings_status": "unavailable",
             "savings_usd": None,
             "savings_pct": None,
+            "savings_direction": "unavailable",
         }
     savings = baseline - actual_usd
+    # Honest direction: savings can be NEGATIVE when the optimizer legitimately
+    # costs more than the always-best counterfactual (escalation double-billing,
+    # control-plane overhead, provider failures). Never hide it.
+    direction = ("savings" if savings > 1e-9
+                 else "loss" if savings < -1e-9
+                 else "breakeven")
     return {
         "baseline_model": baseline_entry.model_id,
         "baseline_method": method,
@@ -77,4 +84,5 @@ def cost_summary(actual_usd: float | None, baseline_entry: ModelEntry,
         "savings_status": "measured",
         "savings_usd": round(savings, 6),
         "savings_pct": round(100.0 * savings / baseline, 2) if baseline > 0 else 0.0,
+        "savings_direction": direction,
     }

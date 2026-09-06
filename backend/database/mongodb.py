@@ -91,12 +91,26 @@ class RequestStore:
         cache_hits = sum(1 for d in docs if d.get("cache_hit"))
         esc = sum(1 for d in docs if d.get("escalated"))
         savings = base - cost
+        # Net savings = savings minus control-plane overhead (honest).
+        cp_cost = sum(d.get("control_plane_cost_usd", 0) or 0 for d in docs)
+        net_savings = savings - cp_cost
+        direction = ("savings" if savings > 1e-9
+                     else "loss" if savings < -1e-9
+                     else "breakeven")
+        net_direction = ("savings" if net_savings > 1e-9
+                         else "loss" if net_savings < -1e-9
+                         else "breakeven")
         return {
             "total_requests": n,
             "total_cost_usd": round(cost, 6),
             "baseline_cost_usd": round(base, 6),
             "savings_usd": round(savings, 6),
             "savings_pct": round(100.0 * savings / base, 2) if base > 0 else 0.0,
+            "savings_direction": direction,
+            "control_plane_cost_usd": round(cp_cost, 6),
+            "net_savings_usd": round(net_savings, 6),
+            "net_savings_pct": round(100.0 * net_savings / base, 2) if base > 0 else 0.0,
+            "net_savings_direction": net_direction,
             "avg_quality": round(sum(quals) / len(quals), 3) if quals else None,
             "cache_hit_rate": round(cache_hits / n, 3),
             "escalation_rate": round(esc / n, 3),
