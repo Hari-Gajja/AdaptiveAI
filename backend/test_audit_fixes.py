@@ -41,6 +41,7 @@ def main() -> int:
         pro = reg.get("deepseek-v4-pro")
         flash.input_per_1M, flash.output_per_1M = 0.01, 0.01
         pro.input_per_1M, pro.output_per_1M = 1.0, 1.0
+        kimi = reg.create(ModelCreate(model_id="kimi-k3", enabled=True))
         import backend.core.capabilities as capabilities
         old_profiles = capabilities.PROFILES_FILE
         profiles_path = Path(td) / "profiles.json"
@@ -51,7 +52,7 @@ def main() -> int:
         )
         capabilities.PROFILES_FILE = profiles_path
         try:
-            check("higher capability beats higher price", baseline_model(reg.enabled()).model_id == "deepseek-v4-flash")
+            check("configured frontier beats measured capability", baseline_model(reg.enabled()).model_id == "kimi-k3")
         finally:
             capabilities.PROFILES_FILE = old_profiles
         unavailable = cost_summary(None, pro, None, 10)
@@ -79,7 +80,7 @@ def main() -> int:
 
         result = run_prompt("What is an API?", reference="An API lets programs communicate.",
                             max_attempts=2, use_cache=False, _generate=transient)
-        check("transient provider failure falls back", result.initial_model == "deepseek-v4-flash" and result.final_model == "deepseek-v4-pro")
+        check("transient provider failure falls back", result.initial_model == "deepseek-v4-flash" and result.final_model == "kimi-k3")
         check("failed provider attempt makes cost status explicit", result.cost_status == "unavailable")
     print("RESULT: PASS")
     return 0
