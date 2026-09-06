@@ -120,6 +120,19 @@ def main() -> int:
         check("order excludes tried", d.selected_model not in order)
         check("order covers rest", len(order) == len(d.candidates) - 1)
 
+        # ---- baseline price-tier cap: escalation never jumps above the
+        # always-best baseline's tier while an in-tier model remains. ----
+        from backend.core.router import CandidateView
+        cheap = CandidateView("deepseek-v4-flash", True, 0.55, 0.0001, [])
+        base = CandidateView("deepseek-v4-pro", True, 0.70, 0.0003, [])
+        above = CandidateView("kimi-k3", True, 0.90, 0.0015, [])
+        capped = escalation_order([cheap, base, above], {"deepseek-v4-flash"}, 0.0003)
+        check("escalation prefers in-tier over above-tier",
+              capped == ["deepseek-v4-pro", "kimi-k3"], str(capped))
+        uncapped = escalation_order([cheap, base, above], {"deepseek-v4-flash"})
+        check("no cap: quality-first order",
+              uncapped == ["kimi-k3", "deepseek-v4-pro"], str(uncapped))
+
     print("RESULT:", "PASS" if failures == 0 else f"{failures} FAILURES")
     return 0 if failures == 0 else 1
 

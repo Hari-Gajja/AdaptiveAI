@@ -87,6 +87,36 @@ def main() -> int:
         check("flash cheaper estimate", costs["deepseek-v4-flash"] < costs["deepseek-v4-pro"],
               str(costs))
 
+        # 7. Task level exposed on the decision.
+        check("easy level", d.task_level == "easy", d.task_level)
+
+        # 8. Medium math task: flash qualifies on a THIN margin -> pro directly
+        #    (a likely fail-then-escalate would double-bill).
+        a8 = analyze("Calculate the probability of rolling two sixes and explain the math.")
+        d8 = route(a8, enabled)
+        check("medium math level", d8.task_level == "medium", d8.task_level)
+        check("medium math routes to pro (thin margin)",
+              d8.selected_model == "deepseek-v4-pro", d8.selected_model)
+
+        # 9. Medium coding task: flash has a COMFORTABLE margin -> flash (safe cheap).
+        a9 = analyze("Write a Python function that parses JSON, handles errors, and "
+                     "returns a sorted list. Explain the error handling.")
+        d9 = route(a9, enabled)
+        check("medium coding level", d9.task_level == "medium", d9.task_level)
+        check("medium coding routes to flash (comfortable margin)",
+              d9.selected_model == "deepseek-v4-flash", d9.selected_model)
+
+        # 10. Hard task -> strongest qualifier directly, safety action.
+        a10 = analyze("Design a fault-tolerant distributed banking architecture with "
+                      "microservices, explain consistency tradeoffs step by step in detail.")
+        a10.difficulty_score = 0.75
+        a10.quality_requirement = "high"
+        d10 = route(a10, enabled)
+        check("hard level flagged", d10.task_level == "hard", d10.task_level)
+        check("hard routes to pro with safety action",
+              d10.selected_model == "deepseek-v4-pro"
+              and d10.confidence_action == "high_difficulty_safety", d10.selected_model)
+
     print("RESULT:", "PASS" if failures == 0 else f"{failures} FAILURES")
     return 0 if failures == 0 else 1
 

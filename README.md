@@ -30,13 +30,19 @@ plus a React control center:
 - **Task Analyzer** — transparent heuristics: task type, difficulty 0–1,
   confidence, required capabilities + thresholds.
 - **Smart Router** — minimize `Cost(m)` subject to
-  `ExpectedQuality(m, task) ≥ RequiredQuality(task)`; low confidence (< 0.60)
-  picks the safest qualifier; nothing qualifies → flagged strongest-fallback.
+  `ExpectedQuality(m, task) ≥ RequiredQuality(task)`, driven by **task level**
+  (easy → cheapest qualifier; medium → cheapest qualifier with a safe
+  capability margin, else strongest; hard → strongest qualifier directly, no
+  cheap-first gamble). Low confidence (< 0.60) picks the safest qualifier;
+  nothing qualifies → flagged strongest-fallback. Every pick is bounded by the
+  **baseline price tier** so optimized spend never exceeds the always-best
+  counterfactual.
 - **Quality Evaluator** — deterministic, zero extra LLM calls:
   `0.5·correctness + 0.3·relevance + 0.2·completeness`, labeled `reference`
   (grounded) or `estimated` (heuristic, never ground truth).
 - **Escalation** — quality below threshold retries the next-best model
-  (capped attempts, honest summed cost).
+  (capped attempts, honest summed cost), preferring in-tier models and only
+  reaching above-baseline-tier models as a last resort.
 - **Prompt cache** — in-memory: exact-prompt hits skip the LLM (savings
   `measured`); same-context/new-question hits count avoided tokens (savings
   `estimated`). Never conflated.

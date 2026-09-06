@@ -22,13 +22,29 @@ Minimize `Cost(m)` subject to `ExpectedQuality(m, task) ≥ RequiredQuality(task
    `estimated_input_tokens + expected_output_tokens > context_window`, the
    model is rejected with a `context window: need ~N > W` gap no matter how
    cheap it is, and `context_limit_triggered` is set on the decision.
-4. Cheapest qualifying model wins (`action="normal"`).
-5. **Low confidence (< 0.60):** pick the *safest* qualifier (highest expected
+4. Classify the task into a **level** from `difficulty_score` (and the
+   explicit `quality_requirement`): `easy` (< 0.35), `medium` (< 0.65),
+   `hard` (>= 0.65 or `quality_requirement == "high"`). The level is exposed
+   on the decision as `task_level`.
+5. **Easy:** cheapest qualifying model wins (`action="normal"`).
+6. **Medium:** cheapest qualifier whose capability margin clears
+   `MEDIUM_MARGIN` (0.05). A thin margin predicts a quality failure, and a
+   failed cheap attempt + escalation costs MORE than the stronger model
+   directly — so thin-margin mediums route to the strongest qualifier.
+7. **Hard:** strongest qualifying model DIRECTLY
+   (`action="high_difficulty_safety"`). No cheap-first gamble: the escalation
+   bill (cheap + strong) exceeds the strong model alone.
+8. **Low confidence (< 0.60):** pick the *safest* qualifier (highest expected
    quality, cost as tiebreak) — `action="low_confidence_safety"`. A wrong
    cheap route costs an escalation; a slightly pricier safe route usually
    doesn't.
-6. **Nothing qualifies:** transparent strongest-fallback — highest expected
-   quality, `meets_requirements=False` so the UI can flag it.
+9. **Baseline price-tier cap:** every "strongest" pick (hard, low-confidence,
+   medium-thin-margin, fallback) ranks models priced ABOVE the always-best
+   baseline's tier below in-tier models. Paying above-baseline prices is the
+   one way optimized spend can exceed the counterfactual baseline, so in-tier
+   models are preferred even at slightly lower expected quality.
+10. **Nothing qualifies:** transparent strongest-fallback — highest expected
+    quality, `meets_requirements=False` so the UI can flag it.
 
 ## Escalation (`core/optimizer.py`)
 
@@ -36,6 +52,13 @@ Quality below threshold retries the next-best candidate, capped by
 `max_attempts`. Every attempt's cost is summed — failed attempts stay on the
 bill and are visible. `verification_status` distinguishes `verified`,
 `escalated_and_verified`, `provider_failed`, `verification_failed`.
+
+The escalation ladder is **bounded by the baseline price tier**: models priced
+above the always-best baseline's expected cost for the same task go last
+(`escalation_order(..., baseline_cost_usd)`). Escalating above the baseline's
+tier is the one way optimized spend can exceed the always-best counterfactual,
+so the baseline model itself is the preferred escalation target and
+above-baseline models are a last resort.
 
 ## Model-selection quality metrics (spec §22, benchmark)
 

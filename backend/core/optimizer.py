@@ -121,10 +121,24 @@ class OptimizerResult:
         return self.attempts[-1].quality if self.attempts else None
 
 
-def escalation_order(candidates: list[CandidateView], tried: set[str]) -> list[str]:
-    """Untried models, best expected quality first, cheapest tiebreak."""
+def escalation_order(candidates: list[CandidateView], tried: set[str],
+                     baseline_cost_usd: float | None = None) -> list[str]:
+    """Untried models, best expected quality first, cheapest tiebreak.
+
+    baseline_cost_usd (the baseline model's expected cost for the SAME task —
+    candidate costs are computed from identical token estimates, so comparing
+    them compares price tiers) caps the escalation ladder: models priced ABOVE
+    the always-best baseline go last. Escalating above the baseline's price
+    tier is the one way optimized spend can exceed the always-best
+    counterfactual, so the baseline model itself is the preferred escalation
+    target and above-baseline models are a last resort.
+    """
     rest = [c for c in candidates if c.model_id not in tried]
-    rest.sort(key=lambda c: (-c.expected_quality, c.expected_cost_usd))
+    if baseline_cost_usd is None:
+        rest.sort(key=lambda c: (-c.expected_quality, c.expected_cost_usd))
+    else:
+        rest.sort(key=lambda c: (c.expected_cost_usd > baseline_cost_usd + 1e-12,
+                                 -c.expected_quality, c.expected_cost_usd))
     return [c.model_id for c in rest]
 
 
@@ -326,7 +340,18 @@ def run_prompt(
     ctx_hit = cache.get_context(context) if (use_cache and context) else None
 
     first = force_model or routing.selected_model
-    order = [first] + [m for m in escalation_order(routing.candidates, {first})]
+    # Escalation ladder is capped at the baseline price tier: the baseline
+    # model's candidate cost (same token estimates for every candidate, so
+    # candidate costs compare price tiers directly) bounds which models
+    # escalation may jump to. Above-baseline models go last — escalating
+    # above the always-best tier is the one way optimized spend can exceed
+    # the counterfactual baseline.
+    base_entry = baseline_model(enabled_list)
+    base_cand = next((c for c in routing.candidates
+                      if c.model_id == base_entry.model_id), None)
+    order = [first] + [m for m in escalation_order(
+        routing.candidates, {first},
+        base_cand.expected_cost_usd if base_cand is not None else None)]
     order = order[:max_attempts]
     if force_model and force_model != routing.selected_model:
         reasons.append(f"Demo override: first attempt forced to {force_model} "
