@@ -54,6 +54,7 @@ def _headers() -> dict[str, str]:
     h = {
         "Authorization": f"Bearer {settings.openai_key}",
         "Content-Type": "application/json",
+        "User-Agent": "adaptive-llm-cost-optimizer/1.0",
     }
     if settings.session_id:
         h["x-opencode-session"] = settings.session_id
@@ -253,11 +254,79 @@ def generate(
     return _generate_chat_completions(model_id, messages, max_tokens, temperature)
 
 
-def list_models() -> list[str]:
-    """Unauthenticated metadata endpoint (docs: GET {base}/models)."""
+def list_model_catalog() -> list[dict]:
+    """Fetch the authenticated OpenCode Go model catalog (docs: GET /models)."""
     try:
-        r = httpx.get(f"{settings.base_url}/models", timeout=15.0)
+        r = httpx.get(f"{settings.base_url}/models", headers=_headers(), timeout=15.0)
+        if r.status_code == 401:
+            raise OpenCodeError("401 Unauthorized — OPENCODE_API_KEY is invalid or missing.")
         r.raise_for_status()
-        return [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
+        payload = r.json()
+        models = payload.get("data", []) if isinstance(payload, dict) else []
+        return [_normalize_catalog_model(m) for m in models
+            if isinstance(m, dict) and m.get("id")]
+    except OpenCodeError:
+        raise
     except Exception as e:
         raise OpenCodeError(f"could not fetch model catalog: {e}") from e
+
+
+def list_models() -> list[str]:
+    """Return IDs from the authenticated OpenCode model catalog."""
+    return [m["id"] for m in list_model_catalog()]
+
+
+def _normalize_catalog_model(model: dict) -> dict:
+    """Expose catalog pricing in the dashboard's USD-per-million shape."""
+    normalized = dict(model)
+    pricing = model.get("pricing") or model.get("cost") or {}
+    if not isinstance(pricing, dict):
+        pricing = {}
+
+    def number(*values):
+        for value in values:
+            try:
+                if value is not None and value != "":
+                    return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    input_price = number(
+        model.get("input_per_1M"), model.get("inputPer1M"),
+        pricing.get("input_per_1M"), pricing.get("inputPer1M"),
+        pricing.get("input"), pricing.get("prompt"), pricing.get("prompt_tokens"),
+    )
+    output_price = number(
+        model.get("output_per_1M"), model.get("outputPer1M"),
+        pricing.get("output_per_1M"), pricing.get("outputPer1M"),
+        pricing.get("output"), pricing.get("completion"), pricing.get("completion_tokens"),
+    )
+    cached_price = number(
+        model.get("cached_per_1M"), model.get("cachedPer1M"),
+        pricing.get("cached_per_1M"), pricing.get("cache_read"), pricing.get("cacheRead"),
+    )
+    if input_price is not None:
+        normalized["input_per_1M"] = input_price
+    if output_price is not None:
+        normalized["output_per_1M"] = output_price
+    if cached_price is not None:
+        normalized["cached_per_1M"] = cached_price
+    if input_price is not None and output_price is not None:
+        normalized["pricing_status"] = "configured"
+        normalized["priced"] = True
+    else:
+        # The Go /models endpoint currently returns identity metadata only.
+        # Fill prices from the curated values sourced from the Go pricing docs.
+        from backend.core.pricing import lookup_pricing
+        known = lookup_pricing(str(model.get("id", "")))
+        if known is not None:
+            normalized.update({
+                "input_per_1M": known["input_per_1M"],
+                "output_per_1M": known["output_per_1M"],
+                "cached_per_1M": known["cached_per_1M"],
+                "pricing_status": "configured",
+                "priced": True,
+                "pricing_source": known.get("source", "catalog"),
+            })
+    return normalized

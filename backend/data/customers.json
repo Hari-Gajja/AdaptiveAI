@@ -1,0 +1,76 @@
+{
+  "customers": [
+    {
+      "customer_id": "acme",
+      "name": "Acme Corp",
+      "api_key_hash": "f052ab24a60d2f7ab8507d773f18698d2c2459d0d3b32d1eb9220f75faa8eeac",
+      "enabled": true,
+      "created_at": "2026-09-06T07:05:38.554949+00:00",
+      "updated_at": "2026-09-06T07:05:38.554949+00:00"
+    },
+    {
+      "customer_id": "smoke-acme",
+      "name": "Smoke Acme",
+      "api_key_hash": "39ae7c57193a1edeb27775a478700d7036ac8e1151b182e47cf70066e88c71cd",
+      "enabled": true,
+      "created_at": "2026-09-06T07:07:23.085162+00:00",
+      "updated_at": "2026-09-06T07:07:23.085162+00:00"
+    },
+    {
+      "customer_id": "smoke-globex",
+      "name": "Globex",
+      "api_key_hash": "38211a14cff936d90ed414ef9558e4400fb0fc7d564c9c7273408edcb93c0a12",
+      "enabled": true,
+      "created_at": "2026-09-06T07:07:39.268595+00:00",
+      "updated_at": "2026-09-06T07:07:39.268595+00:00"
+    },
+    {
+      "customer_id": "smoke-acme-78717",
+      "name": "Smoke Acme",
+      "api_key_hash": "0cb2e01c0ed256f86846d2ddeec03db93b88702ef92c61684b9dc9f6e46605d4",
+      "enabled": true,
+      "created_at": "2026-09-06T07:11:57.409598+00:00",
+      "updated_at": "2026-09-06T07:11:57.409598+00:00"
+    },
+    {
+      "customer_id": "smoke-globex-78717",
+      "name": "Globex",
+      "api_key_hash": "fde39da094e6bb901ee1dbd68bb7ee9b54ca0f79b8179c7d9514e41653198f57",
+      "enabled": true,
+      "created_at": "2026-09-06T07:13:45.968680+00:00",
+      "updated_at": "2026-09-06T07:13:45.968680+00:00"
+    },
+    {
+      "customer_id": "smoke-acme-79094",
+      "name": "Smoke Acme",
+      "api_key_hash": "852be60ea1286110d514378dfee96d205d924a6ba75afceddde4da6e0ab916f2",
+      "enabled": true,
+      "created_at": "2026-09-06T07:18:14.509710+00:00",
+      "updated_at": "2026-09-06T07:18:14.509710+00:00"
+    },
+    {
+      "customer_id": "smoke-globex-79094",
+      "name": "Globex",
+      "api_key_hash": "88ddf231f93b964f9c397d7c359fc05626495b5856b75d3568da45e6beed9935",
+      "enabled": true,
+      "created_at": "2026-09-06T07:19:41.062804+00:00",
+      "updated_at": "2026-09-06T07:19:41.062804+00:00"
+    },
+    {
+      "customer_id": "har",
+      "name": "harii",
+      "api_key_hash": "1bb1f84225977d9c5036af1cdfddcccc5e8f6245af36c76c2fb906c3263e7e79",
+      "enabled": true,
+      "created_at": "2026-09-21T06:05:33.163562+00:00",
+      "updated_at": "2026-09-21T06:53:48.327795+00:00"
+    },
+    {
+      "customer_id": "key-muazh7ty",
+      "name": "app",
+      "api_key_hash": "1711d5f43c8e31ddf0f6ea9c6565f79b3c7e94abea91648e406704e251fe1647",
+      "enabled": true,
+      "created_at": "2026-09-21T08:28:51.821382+00:00",
+      "updated_at": "2026-09-21T08:28:51.821397+00:00"
+    }
+  ]
+}

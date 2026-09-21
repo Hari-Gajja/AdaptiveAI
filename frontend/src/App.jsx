@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Database,
-  FlaskConical,
-  LayoutDashboard,
+  KeyRound,
   Menu,
   Play,
   Server,
@@ -11,22 +9,20 @@ import {
 } from 'lucide-react'
 import './App.css'
 import { api } from './services/api'
-import Benchmark from './pages/Benchmark'
-import CachePage from './pages/CachePage'
-import CommandCenter from './pages/CommandCenter'
+import ApiKeys from './pages/ApiKeys'
+import Gateway from './pages/Gateway'
 import Models from './pages/Models'
 import Playground from './pages/Playground'
 
 const NAV = [
-  ['center', 'Command Center', LayoutDashboard, 'Overview of savings and quality'],
+  ['gateway', 'Gateway', Server, 'Connect your models — auto-profiled, honestly priced'],
+  ['keys', 'API Keys', KeyRound, 'Create and manage gateway API keys'],
   ['play', 'Playground', Play, 'Live routing decisions, step by step'],
   ['models', 'Models', Server, 'Registry and measured capability profiles'],
-  ['cache', 'Cache', Database, 'Exact vs reusable-context hits, honestly labeled'],
-  ['bench', 'Benchmark Lab', FlaskConical, 'Optimizer vs always-best, measured'],
 ]
 
 export default function App() {
-  const [tab, setTab] = useState('center')
+  const [tab, setTab] = useState('gateway')
   const [navOpen, setNavOpen] = useState(false)
   const [health, setHealth] = useState(null)
   const [analytics, setAnalytics] = useState(null)
@@ -111,11 +107,10 @@ export default function App() {
             <h1>{active?.[1]}</h1>
             <p>{active?.[3]}</p>
           </div>
-          {tab === 'center' && <CommandCenter />}
+          {tab === 'gateway' && <Gateway onGoKeys={() => setTab('keys')} />}
+          {tab === 'keys' && <ApiKeys onGoGateway={() => setTab('gateway')} />}
           {tab === 'play' && <Playground />}
           {tab === 'models' && <Models />}
-          {tab === 'cache' && <CachePage />}
-          {tab === 'bench' && <Benchmark />}
         </main>
       </div>
     </div>

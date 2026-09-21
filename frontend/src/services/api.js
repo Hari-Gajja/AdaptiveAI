@@ -8,6 +8,7 @@ export const api = {
   analytics: () => fetch('/api/analytics').then(j),
   routingStats: () => fetch('/api/routing-stats').then(j),
   models: () => fetch('/api/models').then(j),
+  catalogModels: () => fetch('/api/models/catalog').then(j),
   profiles: () => fetch('/api/models/profiles').then(j),
   controlPlane: () => fetch('/api/models/control-plane').then(j),
   addModel: (body) =>
@@ -34,3 +35,48 @@ export const api = {
 
 export const usd = (n) => (n == null ? '–' : `$${Number(n).toFixed(n < 0.01 ? 6 : 4)}`)
 export const pct = (n) => (n == null ? '–' : `${Number(n)}%`)
+
+// ---------------------------------------------------------------- gateway /v1
+// Demo convenience: the gateway key lives in localStorage. Production would
+// use a proper session/token flow — this keeps the demo self-contained.
+const GW_KEY = 'llmo_gateway_key'
+const GW_HISTORY = 'llmo_generated_gateway_keys'
+export const gateway = {
+  getKey: () => localStorage.getItem(GW_KEY) || '',
+  setKey: (k) => localStorage.setItem(GW_KEY, k || ''),
+  clearKey: () => localStorage.removeItem(GW_KEY),
+  rememberGeneratedKey: (key, name) => {
+    const history = gateway.getGeneratedKeys()
+    const next = [{ key, name: name || 'API key', created_at: new Date().toISOString() }, ...history.filter((item) => item.key !== key)]
+    localStorage.setItem(GW_HISTORY, JSON.stringify(next.slice(0, 20)))
+  },
+  getGeneratedKeys: () => {
+    try { return JSON.parse(localStorage.getItem(GW_HISTORY) || '[]') } catch { return [] }
+  },
+}
+
+const gwHeaders = () => {
+  const k = gateway.getKey()
+  return { 'Content-Type': 'application/json', ...(k ? { Authorization: `Bearer ${k}` } : {}) }
+}
+
+const gw = (path, opts = {}) =>
+  fetch(path, { ...opts, headers: { ...gwHeaders(), ...(opts.headers || {}) } }).then(j)
+
+export const gwApi = {
+  createCustomer: (body) =>
+    fetch('/v1/customers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(j),
+  me: () => gw('/v1/customers/me'),
+  rotateKey: () => gw('/v1/customers/rotate-key', { method: 'POST' }),
+  health: () => gw('/v1/health'),
+  models: (enabledOnly = false) => gw(`/v1/models?enabled_only=${enabledOnly}`),
+  discoverModels: (body) => gw('/v1/models/discover', { method: 'POST', body: JSON.stringify(body) }),
+  registerModel: (body) => gw('/v1/models/register', { method: 'POST', body: JSON.stringify(body) }),
+  updateModel: (id, body) => gw(`/v1/models/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteModel: (id) => gw(`/v1/models/${id}`, { method: 'DELETE' }),
+  testModel: (id) => gw(`/v1/models/${id}/test`, { method: 'POST' }),
+  profileModel: (id) => gw(`/v1/models/${id}/profile`, { method: 'POST' }),
+  analytics: () => gw('/v1/analytics'),
+  optimize: (body) => gw('/v1/optimize', { method: 'POST', body: JSON.stringify(body) }),
+  chat: (body) => gw('/v1/chat/completions', { method: 'POST', body: JSON.stringify(body) }),
+}

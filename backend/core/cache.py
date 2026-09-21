@@ -41,14 +41,18 @@ def _key(prefix: str, text: str) -> str:
     return prefix + hashlib.sha256(normalize(text).encode("utf-8")).hexdigest()
 
 
-def exact_key(prompt: str, context: str | None = None) -> str:
-    """Key an answer by both prompt and context when context is supplied."""
+def exact_key(prompt: str, context: str | None = None,
+              namespace: str = "") -> str:
+    """Key an answer by both prompt and context when context is supplied.
+
+    namespace (e.g. customer_id) isolates tenants: customer A can never hit
+    customer B's cached answers, even for byte-identical prompts."""
     normalized_context = normalize(context or "")
-    return _key("exact:", f"{normalize(prompt)}\ncontext:{normalized_context}")
+    return _key("exact:", f"{namespace}\n{normalize(prompt)}\ncontext:{normalized_context}")
 
 
-def context_key(context: str) -> str:
-    return _key("ctx:", context)
+def context_key(context: str, namespace: str = "") -> str:
+    return _key("ctx:", f"{namespace}\n{context}")
 
 
 @dataclass
@@ -61,6 +65,7 @@ class CacheEntry:
     output_tokens: int
     cost_usd: float | None
     context_tokens: int
+    namespace: str = ""  # tenant isolation (customer_id); "" = single-tenant
 
 
 # Redis key layout (prefix llmo:cache:):
@@ -138,29 +143,34 @@ class PromptCache:
         self._lock = threading.Lock()
 
     # ---- lookups ----
-    def get_exact(self, prompt: str, context: str | None = None) -> CacheEntry | None:
-        raw = self._r.get(_EXACT + _sha(exact_key(prompt, context)))
+    def get_exact(self, prompt: str, context: str | None = None,
+                  namespace: str = "") -> CacheEntry | None:
+        raw = self._r.get(_EXACT + _sha(exact_key(prompt, context, namespace)))
         if raw is None:
             return None
         return CacheEntry(**json.loads(raw))
 
-    def get_context(self, context: str) -> CacheEntry | None:
+    def get_context(self, context: str, namespace: str = "") -> CacheEntry | None:
         if not (context or "").strip():
             return None
-        raw = self._r.get(_CTX + _sha(context_key(context)))
+        raw = self._r.get(_CTX + _sha(context_key(context, namespace)))
         if raw is None:
             return None
         return CacheEntry(**json.loads(raw))
 
-    def contains(self, prompt: str, context: str | None = None) -> bool:
-        return self.get_exact(prompt, context) is not None
+    def contains(self, prompt: str, context: str | None = None,
+                 namespace: str = "") -> bool:
+        return self.get_exact(prompt, context, namespace) is not None
 
-    def lookup_semantic(self, prompt: str, context: str | None = None
+    def lookup_semantic(self, prompt: str, context: str | None = None,
+                        namespace: str = ""
                         ) -> tuple[CacheEntry | None, float, list[str]]:
         """Scan semantic tier: best cosine >= threshold, then safety gates.
 
         Returns (entry, score, veto_reasons). Entry None when nothing passes
         both stages; veto reasons surface in the decision trace.
+        Entries from another namespace (customer) are skipped entirely —
+        cross-tenant reuse is never even considered.
         """
         if self._sem_threshold <= 0:
             return None, 0.0, ["semantic tier disabled"]
@@ -172,6 +182,8 @@ class PromptCache:
                 self._r.zrem(_SEM_IDX, key)
                 continue
             d = json.loads(raw)
+            if (d.get("namespace", "") or "") != namespace:
+                continue  # tenant isolation
             # Compare on canonicalized text: "15 percent" vs "15%" must score
             # as the same prompt, not as different operators.
             score = similarity(canonicalize(prompt), canonicalize(d["prompt"]))
@@ -190,20 +202,24 @@ class PromptCache:
         return entry, score, []
 
     # ---- writes ----
-    def put(self, entry: CacheEntry, semantic: bool = True) -> None:
+    def put(self, entry: CacheEntry, semantic: bool = True,
+            namespace: str = "") -> None:
         """Store in exact + context tiers; index for semantic reuse."""
-        ek = _EXACT + _sha(exact_key(entry.prompt, entry.context))
+        ns = namespace or entry.namespace or ""
+        entry.namespace = ns
+        ek = _EXACT + _sha(exact_key(entry.prompt, entry.context, ns))
         self._r.set(ek, json.dumps(asdict(entry)))
         self._r.zadd(_EXACT_IDX, {ek: self._next_seq()})
         self._evict(_EXACT_IDX)
         if entry.context.strip():
-            ck = _CTX + _sha(context_key(entry.context))
+            ck = _CTX + _sha(context_key(entry.context, ns))
             self._r.set(ck, json.dumps(asdict(entry)))
             self._r.zadd(_CTX_IDX, {ck: self._next_seq()})
             self._evict(_CTX_IDX)
         if semantic:
             k = _SEM + hashlib.sha256(normalize(entry.prompt).encode()).hexdigest()
-            self._r.set(k, json.dumps({"entry": asdict(entry), "prompt": entry.prompt}))
+            self._r.set(k, json.dumps({"entry": asdict(entry), "prompt": entry.prompt,
+                                       "namespace": ns}))
             self._r.zadd(_SEM_IDX, {k: self._next_seq()})
             self._evict(_SEM_IDX)
 

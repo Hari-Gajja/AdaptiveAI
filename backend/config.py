@@ -21,6 +21,12 @@ MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 DATABASE_NAME: str = os.getenv("DATABASE_NAME", "llm_optimizer")
 QUALITY_THRESHOLD: float = float(os.getenv("QUALITY_THRESHOLD", "0.75"))
 
+# --- Gateway (multi-tenant) ---
+# GATEWAY_SECRET_KEY encrypts customer provider credentials at rest
+# (backend/core/secret_store.py). MUST be set in production; a dev default
+# keeps the demo working but is NOT a real secret.
+GATEWAY_SECRET_KEY: str = os.getenv("GATEWAY_SECRET_KEY", "dev-gateway-secret-change-me")
+
 # --- Cache backend (Phase 7) ---
 # REDIS_URL: real Redis when reachable (docker run -p 6379:6379 redis:7-alpine).
 # Unreachable -> transparent in-memory fallback with the SAME redis-py API

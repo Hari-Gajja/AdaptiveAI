@@ -193,16 +193,21 @@ def test_optimizer_integration():
     check("legacy analysis backend", r1.analysis.backend == "legacy_ml")
 
     # opencode classifier recorded (fresh cache: r1 stored its answer, and
-    # cache-first would otherwise skip the classifier on the exact hit)
+    # cache-first would otherwise skip the classifier on the exact hit).
+    # Default CP model is the FREE Nemotron ($0), so cost is legitimately 0 —
+    # assert tokens recorded + priced correctly (0 for free, >0 for paid).
     cachemod.reset_cache_for_tests()
     res = cp_result("classifier", {"t": "O", "d": "E", "c": 0.8})
     with mock.patch.object(client, "classify", return_value=res):
         r2 = optmod.run_prompt("What is an API?", max_tokens=64,
                                _generate=fake("An API is a contract between programs."),
                                _evaluate=evaluate)
+        cp_entry = regmod.get_registry().get(cp_cfg.OPENCODE_MODEL)
+        cp_free = cp_entry.input_per_1M == 0 and cp_entry.output_per_1M == 0
         check("opencode classifier recorded",
               r2.ledger.status == "active" and r2.ledger.classifier.input_tokens == 30
-              and r2.ledger.total_cost_usd > 0)
+              and ((r2.ledger.total_cost_usd == 0.0) if cp_free
+                   else (r2.ledger.total_cost_usd > 0)))
 
     # exact hit: cache-first means the classifier is NEVER called (§13) —
     # the free legacy analyzer fills analysis/routing instead.

@@ -41,9 +41,10 @@ def _env_bool(name: str, default: bool) -> bool:
 OPENCODE_ENABLED: bool = _env_bool("OPENCODE_ENABLED", True)
 
 # Cheap model used for ALL control-plane calls (classifier/verifier/evaluator).
-# Must be an enabled registry model with configured pricing; the client
-# validates and falls back to legacy when it is not.
-OPENCODE_MODEL: str = _env("OPENCODE_MODEL", "deepseek-v4-flash")
+# Default: Nemotron 3.5 Lightning Free via OpenCode Zen (free tier, $0).
+# Must be an enabled registry model with configured pricing (free models are
+# priced at 0.0); the client validates and falls back to legacy when it is not.
+OPENCODE_MODEL: str = _env("OPENCODE_MODEL", "nemotron-3.5-lightning-free")
 
 # Optional explicit provider tag for display only (the actual endpoint family
 # is resolved by the existing provider from the model id).

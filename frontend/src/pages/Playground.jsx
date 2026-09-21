@@ -82,11 +82,8 @@ function CostMini({ res }) {
   const opt = res.actual_cost_usd
   const base = res.baseline_cost_usd
   const saved = res.savings_usd
-  const net = res.net_savings_usd
   const hasCost = res.cost_status === 'measured' && opt != null
   const hasBase = base != null
-  const isLoss = (res.savings_direction === 'loss') || (saved != null && saved < 0)
-  const isNetLoss = net != null && net < 0
   const max = Math.max(opt || 0, base || 0, 1e-9)
   return (
     <div className="pg-cost">
@@ -96,7 +93,7 @@ function CostMini({ res }) {
       </div>
       <div className="pg-cost-row">
         <span className="pg-cost-label">Optimized</span>
-        <div className="pg-cost-track"><i className={`pg-cost-fill pg-cost-opt${isLoss ? ' pg-cost-opt-loss' : ''}`} style={{ width: `${((opt || 0) / max) * 100}%` }} /></div>
+        <div className="pg-cost-track"><i className="pg-cost-fill pg-cost-opt" style={{ width: `${((opt || 0) / max) * 100}%` }} /></div>
         <span className="pg-cost-val num">{hasCost ? usd(opt) : '–'}</span>
       </div>
       <div className="pg-cost-row">
@@ -104,16 +101,10 @@ function CostMini({ res }) {
         <div className="pg-cost-track"><i className="pg-cost-fill pg-cost-base" style={{ width: `${((base || 0) / max) * 100}%` }} /></div>
         <span className="pg-cost-val num">{hasBase ? usd(base) : '–'}</span>
       </div>
-      {saved != null && saved !== 0 && (
-        <div className={`pg-cost-saved${isLoss ? ' pg-cost-saved-loss' : ''}`}>
-          {isLoss ? <ArrowUp size={13} /> : <ArrowDownRight size={13} />}
-          <span>{isLoss ? 'Costs more than baseline ' : 'Saved '}<b className="num">{usd(Math.abs(saved))}</b></span>
-        </div>
-      )}
-      {net != null && net !== 0 && (
-        <div className={`pg-cost-saved${isNetLoss ? ' pg-cost-saved-loss' : ''}`} title="savings minus control-plane overhead">
-          {isNetLoss ? <ArrowUp size={13} /> : <ArrowDownRight size={13} />}
-          <span>Net (incl. CP) {isNetLoss ? '−' : ''}<b className="num">{usd(Math.abs(net))}</b></span>
+      {saved != null && saved > 0 && (
+        <div className="pg-cost-saved">
+          <ArrowDownRight size={13} />
+          <span>Saved <b className="num">{usd(saved)}</b></span>
         </div>
       )}
     </div>
@@ -313,30 +304,6 @@ function OptMeta({ res, onTrace }) {
               <span className="pg-meta-k">Status</span>
               <span className={`pg-meta-v${verified ? ' pg-ok' : ''}`}>{verified ? '✓ Verified' : res.verification_status || '—'}</span>
             </div>
-            {res.normalization && res.normalization.tokens_saved > 0 && (
-              <div className="pg-meta-item">
-                <span className="pg-meta-k">Prompt normalized</span>
-                <span className="pg-meta-v num">−{res.normalization.tokens_saved} tokens ({Math.round((res.normalization.compression_ratio || 1) * 100)}%)</span>
-              </div>
-            )}
-            {res.estimated_output_tokens != null && (
-              <div className="pg-meta-item">
-                <span className="pg-meta-k">Output budget</span>
-                <span className="pg-meta-v num">{res.estimated_output_tokens} tokens</span>
-              </div>
-            )}
-            {res.classifier_calls_avoided && (res.classifier_calls_avoided.exact > 0 || res.classifier_calls_avoided.semantic > 0) && (
-              <div className="pg-meta-item">
-                <span className="pg-meta-k">Classifier skipped</span>
-                <span className="pg-meta-v num">cache-first ({res.classifier_calls_avoided.exact} exact / {res.classifier_calls_avoided.semantic} semantic)</span>
-              </div>
-            )}
-            {res.context_limit_triggered && (
-              <div className="pg-meta-item">
-                <span className="pg-meta-k">Context limit</span>
-                <span className="pg-meta-v">router trimmed model list to fit context window</span>
-              </div>
-            )}
           </div>
           <button className="pg-trace-btn" onClick={onTrace}>
             <Route size={14} />
@@ -372,7 +339,7 @@ function AssistantMsg({ res, onTrace, onRegen }) {
         {cacheHit && (
           <span className="pg-cache-badge">
             <Zap size={11} />
-            {cacheKind === 'exact' ? 'Cached response' : cacheKind === 'semantic' ? 'Semantic cache hit' : cacheKind === 'context' ? 'Context cache hit' : 'Cached'}
+            {cacheKind === 'exact' ? 'Cached response' : cacheKind === 'context' ? 'Context cache hit' : 'Cached'}
           </span>
         )}
         {verified && <span className="pg-verified-badge"><CheckCircle2 size={11} />Verified</span>}

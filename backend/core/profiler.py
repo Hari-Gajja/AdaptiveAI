@@ -73,7 +73,8 @@ def _save_profiles(new: dict[str, dict], tests: list[dict] | None = None) -> dic
     return current
 
 
-def _run_job(job_id: str, model_ids: list[str]) -> None:
+def _run_job(job_id: str, model_ids: list[str], _generate=None,
+             customer_id: str | None = None) -> None:
     from backend.core.registry import get_registry
     tests = load_tests()
     done = 0
@@ -83,10 +84,16 @@ def _run_job(job_id: str, model_ids: list[str]) -> None:
         for mid in model_ids:
             with _jobs_lock:
                 _jobs[job_id]["current_model"] = mid
-            scores = profile_model(mid, tests)
+            scores = profile_model(mid, tests, _generate=_generate)
             results[mid] = scores
             try:
-                get_registry().mark_profile_status(mid, "profiled")
+                if customer_id:
+                    # Gateway mode: mark the CUSTOMER's registry entry (the
+                    # single-tenant registry has no row for this model).
+                    from backend.core.customer_registry import get_customer_registry
+                    get_customer_registry().mark_profile_status(customer_id, mid, "profiled")
+                else:
+                    get_registry().mark_profile_status(mid, "profiled")
             except Exception:
                 pass
             done += len(tests)
@@ -101,13 +108,15 @@ def _run_job(job_id: str, model_ids: list[str]) -> None:
             _jobs[job_id].update({"status": "error", "error": str(e)})
 
 
-def start_job(model_ids: list[str]) -> str:
+def start_job(model_ids: list[str], _generate=None,
+              customer_id: str | None = None) -> str:
     job_id = uuid.uuid4().hex[:8]
     total = len(model_ids) * len(load_tests())
     with _jobs_lock:
         _jobs[job_id] = {"job_id": job_id, "status": "running", "models": model_ids,
                          "done": 0, "total": total, "current_model": model_ids[0] if model_ids else ""}
-    threading.Thread(target=_run_job, args=(job_id, model_ids), daemon=True).start()
+    threading.Thread(target=_run_job, args=(job_id, model_ids, _generate, customer_id),
+                     daemon=True).start()
     return job_id
 
 

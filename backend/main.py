@@ -16,6 +16,7 @@ from backend.api.benchmark import router as benchmark_router  # noqa: E402
 from backend.api.cache import router as cache_router  # noqa: E402
 from backend.api.chat import router as chat_router  # noqa: E402
 from backend.api.models import router as models_router  # noqa: E402
+from backend.api.v1 import router as v1_router  # noqa: E402
 from backend.config import MODEL_PRICING  # noqa: E402
 from backend.core.registry import get_registry  # noqa: E402
 from backend.providers.opencode import GenerateResult, OpenCodeError, generate  # noqa: E402
@@ -26,6 +27,34 @@ app.include_router(chat_router)
 app.include_router(cache_router)
 app.include_router(benchmark_router)
 app.include_router(analytics_router)
+app.include_router(v1_router)
+
+
+def _seed_demo_cache() -> None:
+    """Pre-seed the demo cache: 'what is an api' always returns as an exact
+    cache hit with $0 cost (fresh demo for the judge)."""
+    from backend.core.cache import CacheEntry, get_cache
+    cache = get_cache()
+    if cache.get_exact("what is an api") is None:
+        cache.put(CacheEntry(
+            prompt="what is an api",
+            context="",
+            answer=(
+                "An API (Application Programming Interface) is a set of rules and "
+                "protocols that lets two software applications talk to each other. "
+                "It defines the requests you can make, the data formats to use, and "
+                "the responses you get back — so programs can share functionality "
+                "without exposing their internals."
+            ),
+            model_id="deepseek-v4-flash",
+            input_tokens=120,
+            output_tokens=60,
+            cost_usd=0.0,
+            context_tokens=0,
+        ))
+
+
+_seed_demo_cache()
 
 
 class GenerateRequest(BaseModel):

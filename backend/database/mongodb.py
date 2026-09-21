@@ -79,8 +79,10 @@ class RequestStore:
                 pass
         return list(self._mem_requests[-limit:])
 
-    def analytics(self) -> dict:
+    def analytics(self, customer_id: str | None = None) -> dict:
         docs = self._all_requests()
+        if customer_id is not None:
+            docs = [d for d in docs if d.get("customer_id") == customer_id]
         n = len(docs)
         if n == 0:
             return {"total_requests": 0, "mode": self.mode}
@@ -117,8 +119,10 @@ class RequestStore:
             "mode": self.mode,
         }
 
-    def routing_stats(self) -> dict:
+    def routing_stats(self, customer_id: str | None = None) -> dict:
         docs = self._all_requests()
+        if customer_id is not None:
+            docs = [d for d in docs if d.get("customer_id") == customer_id]
         by_model: dict[str, int] = {}
         by_task: dict[str, dict[str, int]] = {}
         for d in docs:

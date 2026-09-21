@@ -2,15 +2,23 @@
 
 **Minimum capable intelligence for every request — profiled, routed, verified, measured.**
 
-Organizations connect the LLM models they already have. The system learns each
-model's capabilities, understands every request, selects the cheapest model
-capable of solving it, caches reusable context, verifies answer quality,
-escalates when necessary, and measures the actual cost/quality trade-off
-against an always-best-model baseline.
+Adaptive is a **model-agnostic LLM gateway**: customers obtain a gateway API
+key, connect their OWN providers (base_url + API key + model_id), and route
+requests through the gateway with `model="auto"`. The system auto-profiles
+every connected model's capabilities (customers never label models
+cheap/mid/frontier), understands every request, selects the cheapest capable
+model from the customer's own pool, caches reusable context (namespaced per
+customer), verifies answer quality, escalates when necessary, and measures the
+actual cost/quality trade-off against an always-best-model baseline — net of
+control-plane overhead.
 
 ```
 PROFILE → UNDERSTAND → FILTER → OPTIMIZE → GENERATE → VERIFY → ESCALATE → MEASURE → LEARN
 ```
+
+Docs: [API.md](API.md) · [MODEL_REGISTRY.md](MODEL_REGISTRY.md) ·
+[ROUTING.md](ROUTING.md) · [SECURITY.md](SECURITY.md) ·
+[DEMO_GUIDE.md](DEMO_GUIDE.md) · [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## Problem
 
@@ -23,31 +31,38 @@ quality measurement are not optimization.
 An intelligent gateway (FastAPI) in front of multiple LLM APIs (OpenCode Go)
 plus a React control center:
 
-- **Model Registry** — org configures any models (no cheap/frontier labels).
+- **Gateway tenancy** — customers get a `gw_` API key (hashed, shown once) and
+  register their own models (base_url + encrypted credential + model_id).
+- **Model Registry** — customers connect any models (no cheap/frontier labels).
 - **Model Profiler** — measures per-category capability scores on our own
-  24-item test set. Scores are *benchmark performance on our set*, never
-  claimed as universal intelligence scores.
+  24-item test set, through the customer's own endpoint. Scores are *benchmark
+  performance on our set*, never claimed as universal intelligence scores.
 - **Task Analyzer** — transparent heuristics: task type, difficulty 0–1,
   confidence, required capabilities + thresholds.
-- **Smart Router** — minimize `Cost(m)` subject to
-  `ExpectedQuality(m, task) ≥ RequiredQuality(task)`, driven by **task level**
-  (easy → cheapest qualifier; medium → cheapest qualifier with a safe
-  capability margin, else strongest; hard → strongest qualifier directly, no
-  cheap-first gamble). Low confidence (< 0.60) picks the safest qualifier;
-  nothing qualifies → flagged strongest-fallback. Every pick is bounded by the
-  **baseline price tier** so optimized spend never exceeds the always-best
-  counterfactual.
+- **Hybrid Router** — Nemotron (control plane) RECOMMENDS a model; a
+  deterministic validator DECIDES (exists / owner / enabled / context fits /
+  capabilities / pricing valid / not blocked), falling back to the
+  deterministic router. Provenance is always reported:
+  `nemotron_recommended | deterministic | nemotron_rejected_fallback`.
+- **Dynamic tiers** — cheap/mid/frontier derived from the customer's own pool
+  (price terciles), never hard-coded.
 - **Quality Evaluator** — deterministic, zero extra LLM calls:
   `0.5·correctness + 0.3·relevance + 0.2·completeness`, labeled `reference`
   (grounded) or `estimated` (heuristic, never ground truth).
 - **Escalation** — quality below threshold retries the next-best model
   (capped attempts, honest summed cost), preferring in-tier models and only
   reaching above-baseline-tier models as a last resort.
-- **Prompt cache** — in-memory: exact-prompt hits skip the LLM (savings
-  `measured`); same-context/new-question hits count avoided tokens (savings
-  `estimated`). Never conflated.
+- **Prompt cache** — in-memory, **namespaced per customer**: exact-prompt hits
+  skip the LLM (savings `measured`); same-context/new-question hits count
+  avoided tokens (savings `estimated`). Never conflated. Tenant A can never
+  hit tenant B's entries.
 - **Cost engine** — actual spend + counterfactual always-best baseline
   (measured tokens × best-model pricing; no duplicate expensive calls).
+  `net_savings_usd` = gross savings − control-plane overhead, reported
+  alongside, so AI-assisted routing never hides its own cost.
+- **Pricing integrity** — declared prices win, then the curated catalog, then
+  `pricing_status: "unknown"` — prices are NEVER fabricated; unpriced models
+  are excluded from cost-optimal routing (clean 400, not a guess).
 - **Token optimizer** — free, deterministic: prompt normalization (code fences
   preserved), chars/4 token estimation, and predicted output budgets
   (128/256/512) so short answers don't pay for a 512-token allowance. Cache
@@ -142,6 +157,25 @@ npm install
 npm run dev   # http://localhost:5173 (proxies /api → :8000)
 ```
 
+### Gateway quickstart (multi-tenant, 60 seconds)
+
+```powershell
+$r = Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/customers `
+     -ContentType "application/json" -Body '{"customer_id":"acme","name":"Acme Corp"}'
+$H = @{ Authorization = "Bearer $($r.api_key)" }   # shown ONCE — store it
+
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/models/register -Headers $H `
+  -ContentType "application/json" -Body (@{ model_id="acme-mini"
+    base_url="https://api.acme.ai/v1"; api_key="sk-acme-1"
+    input_per_1M=0.12; output_per_1M=0.48 } | ConvertTo-Json)
+
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/chat/completions `
+  -Headers $H -ContentType "application/json" -Body (@{ model="auto"
+    messages=@(@{role="user"; content="What is an API?"}) } | ConvertTo-Json -Depth 5)
+```
+
+Full walkthrough: [DEMO_GUIDE.md](DEMO_GUIDE.md).
+
 Phase verification scripts (no API key needed except test_provider live checks):
 
 ```powershell
@@ -153,6 +187,9 @@ python backend\test_profiler.py
 python backend\test_benchmark.py
 python backend\test_control_plane.py
 python backend\test_token_optimizer.py
+python backend\test_audit_fixes.py
+python backend\test_gateway_core.py   # gateway core: customers, registry, secrets, tiers, hybrid router
+python backend\test_v1_api.py         # full /v1 API surface (79 checks, no network)
 ```
 
 ## Environment variables
@@ -166,7 +203,7 @@ python backend\test_token_optimizer.py
 | `MONGODB_URI` / `DATABASE_NAME` | Atlas (optional; memory fallback otherwise) |
 | `QUALITY_THRESHOLD` | Escalation bar, default `0.75` |
 | `OPENCODE_ENABLED` | Control-plane master switch (default `true`) |
-| `OPENCODE_MODEL` | Control-plane model (default `deepseek-v4-flash`) |
+| `OPENCODE_MODEL` | Control-plane model (default `nemotron-3.5-lightning-free`, free) |
 | `OPENCODE_TIMEOUT_SECONDS` | Per-call CP timeout (default `20`) |
 | `CLASSIFIER_BACKEND` | `opencode` or `legacy_ml` (default `opencode`) |
 | `QUALITY_CHECK_MODE` | `off` / `benchmark` / `live` (default `live`) |
@@ -175,8 +212,27 @@ python backend\test_token_optimizer.py
 | `CLASSIFIER_MAX_OUTPUT_TOKENS` / `VERIFIER_MAX_OUTPUT_TOKENS` / `EVALUATOR_MAX_OUTPUT_TOKENS` | CP output budgets (50/40/80) |
 | `PROMPT_TEMPLATES_ENABLED` | Task-aware minimal system prompts (default `true`) |
 | `TOKEN_OPT_BASELINE_OUTPUT_BUDGET` | Naive-arm output budget for token-savings math (default `1024`) |
+| `GATEWAY_SECRET_KEY` | Encrypts customer provider credentials at rest — set a long random value in production |
 
 ## API endpoints
+
+### Gateway API (`/v1`, multi-tenant — auth: `Authorization: Bearer gw_...`)
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/v1/customers` | provision customer; `gw_` key returned exactly once |
+| GET | `/v1/customers/me` | whoami |
+| POST | `/v1/models/register` | connect the customer's own model (base_url + key + prices) |
+| GET | `/v1/models` | my models (`?enabled_only=true`) |
+| GET/PUT/DELETE | `/v1/models/{id}` | read / update (rotate key, reprice) / delete |
+| POST | `/v1/models/{id}/test` | live connectivity test through the customer's endpoint |
+| POST | `/v1/models/{id}/profile` | auto-profile capability (background job) |
+| POST | `/v1/optimize` | full pipeline over the customer's pool |
+| POST | `/v1/chat/completions` | OpenAI-compatible; `model="auto"` = gateway routes |
+| GET | `/v1/analytics` | customer-scoped analytics + routing stats |
+| GET | `/v1/health` | gateway health for the caller |
+
+### Platform API (`/api`, single-tenant control center)
 
 | Method | Path | Notes |
 |---|---|---|
@@ -218,8 +274,12 @@ python backend\test_token_optimizer.py
   high escalation rates on terse answers.
 - Capability profiles measured on 4 samples/category — expect noise; the UI
   labels measured vs estimated everywhere.
-- In-memory cache + JSON registry are single-process (fine for the hackathon,
-  not for multi-replica prod).
+- In-memory cache + JSON registries (models, customers, credentials) are
+  single-process (fine for the hackathon, not for multi-replica prod).
+- Customer-supplied `base_url` is an accepted SSRF surface for the MVP (see
+  SECURITY.md); production needs allow-lists/egress controls.
+- Credential encryption is XOR-keystream obfuscation, not KMS-grade.
+- No per-customer rate limits/quotas yet.
 - Baseline quality from an n=5 sample — reported with n, not hidden.
 - Control-plane usage is provider-reported when available, otherwise estimated
   at chars/4 and flagged `usage_estimated`; CP latency adds to per-request
@@ -234,6 +294,7 @@ python backend\test_token_optimizer.py
   (the LEARN step is currently manual re-run).
 - Provider-side prompt caching wired to measured cache-read billing.
 - Per-model latency tracking in routing; budget-constrained routing mode.
-- Auth + multi-tenant quotas.
+- Per-customer rate limits, quotas, and key rotation endpoints.
+- KMS-backed credential storage; audit log for security events.
 - Aggregate control-plane spend in analytics (currently per-request ledger +
   benchmark totals).

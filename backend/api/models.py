@@ -18,7 +18,7 @@ from backend.llm.opencode_client import (
     control_plane_stats,
     health as cp_health,
 )
-from backend.providers.opencode import OpenCodeError, list_models
+from backend.providers.opencode import OpenCodeError, list_model_catalog, list_models
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -38,12 +38,22 @@ def list_models_api(enabled_only: bool = Query(False), include_catalog: bool = Q
     out: dict = {"models": models, "count": len(models)}
     if include_catalog:
         try:
-            catalog = list_models()
+            catalog = list_model_catalog()
             out["catalog"] = catalog
             out["catalog_size"] = len(catalog)
         except OpenCodeError as e:
             out["catalog_error"] = str(e)
     return out
+
+
+@router.get("/catalog")
+def model_catalog():
+    """Return every model currently exposed by the configured OpenCode key."""
+    try:
+        catalog = list_model_catalog()
+    except OpenCodeError as e:
+        raise HTTPException(502, str(e)) from e
+    return {"models": catalog, "count": len(catalog)}
 
 
 @router.get("/profiles")

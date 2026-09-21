@@ -110,6 +110,8 @@ class OptimizerResult:
     estimated_output_tokens: int = 256
     output_budget_signals: list = field(default_factory=list)
     context_limit_triggered: bool = False
+    # --- Gateway (multi-tenant): hybrid selection provenance ---
+    gateway_decision: object | None = None
 
     @property
     def initial_model(self) -> str:
@@ -199,11 +201,20 @@ def run_prompt(
     cache_verify: bool | None = None,
     _generate: Callable = generate,
     _evaluate: Callable = evaluate,
+    # --- Gateway (multi-tenant) params. All default to None = legacy
+    # single-tenant behavior, so every existing caller/test is untouched. ---
+    customer_id: str | None = None,
+    customer_models: list | None = None,
+    provider_factory: Callable | None = None,
 ) -> OptimizerResult:
     """Full pipeline. _generate/_evaluate are injectable for keyless tests.
     classifier_backend/quality_check_mode/cache_verify override the env config
     per request (used by the benchmark A/B modes).
 
+    Gateway mode (customer_id set): routes over the CUSTOMER's own model pool
+    (customer_models), uses hybrid selection (Nemotron recommends ->
+    deterministic validation), namespaces the cache per customer, and calls
+    the customer's own provider endpoints via provider_factory(model_id).
     max_tokens: explicit int wins; None = auto output budget from the task
     analysis (predicted small/medium/large) so short answers don't pay for a
     512-token allowance."""
@@ -213,17 +224,26 @@ def run_prompt(
     max_attempts = max(1, max_attempts)
     context = (context or "").strip()
 
+    gateway_mode = customer_id is not None and customer_models is not None
     backend_cls = classifier_backend or cp_cfg.CLASSIFIER_BACKEND
     qmode = (quality_check_mode or cp_cfg.QUALITY_CHECK_MODE).lower()
     do_verify = cp_cfg.CACHE_VERIFY_ENABLED if cache_verify is None else cache_verify
 
     registry = get_registry()
-    enabled_list = registry.enabled()
-    enabled = {m.model_id: m for m in enabled_list}
+    if gateway_mode:
+        from backend.core.gateway_router import candidate_views, select_model
+        from backend.core.tiers import derive_tiers
+        enabled_list = list(customer_models)
+        enabled = {m.model_id: m for m in enabled_list}
+    else:
+        enabled_list = registry.enabled()
+        enabled = {m.model_id: m for m in enabled_list}
     if not enabled:
         raise ValueError("no enabled models in registry")
     if force_model is not None and force_model not in enabled:
         raise ValueError(f"force_model '{force_model}' is unknown or disabled")
+    if force_model is not None and enabled[force_model].pricing_status != "configured":
+        raise ValueError(f"force_model '{force_model}' has unknown pricing and cannot be used")
 
     cache = get_cache()
     ledger = ControlPlaneLedger(model_id=cp_cfg.OPENCODE_MODEL)
@@ -242,11 +262,16 @@ def run_prompt(
     reasons: list[str] = []
 
     if use_cache:
-        hit = cache.get_exact(prompt, context)
+        hit = cache.get_exact(prompt, context, namespace=customer_id or "")
         if hit is not None:
             cache.note_exact_hit(hit)
             ledger.calls_avoided_exact += 1
-            routing = route(legacy_analysis, enabled_list)
+            if gateway_mode:
+                routing = select_model(legacy_analysis, customer_id,
+                                       enabled_list, None, "").routing
+                routing = routing or route(legacy_analysis, _adapt(enabled_list))
+            else:
+                routing = route(legacy_analysis, enabled_list)
             reasons = list(routing.decision_reason)
             reasons.append(f"Cache EXACT hit: returning stored answer from {hit.model_id}, "
                            f"skipped LLM call (measured savings ${hit.cost_usd:.6f}).")
@@ -273,7 +298,8 @@ def run_prompt(
             return result
 
         # ---- semantic cache hit: similar prompt + ALL safety gates pass ----
-        sem_hit, sem_score, vetoes = cache.lookup_semantic(prompt, context)
+        sem_hit, sem_score, vetoes = cache.lookup_semantic(prompt, context,
+                                                           namespace=customer_id or "")
         if sem_hit is not None:
             # Phase 8: gates passed -> optional LLM verifier double-check.
             # The verifier can VETO (treat as miss) but can never approve a
@@ -298,7 +324,12 @@ def run_prompt(
             if reuse:
                 cache.note_semantic_hit(sem_hit, sem_score)
                 ledger.calls_avoided_semantic += 1
-                routing = route(legacy_analysis, enabled_list)
+                if gateway_mode:
+                    routing = select_model(legacy_analysis, customer_id,
+                                           enabled_list, None, "").routing
+                    routing = routing or route(legacy_analysis, _adapt(enabled_list))
+                else:
+                    routing = route(legacy_analysis, enabled_list)
                 reasons.extend(routing.decision_reason)
                 reasons.append(
                     f"Cache SEMANTIC hit (similarity {sem_score:.2f} >= {cache._sem_threshold}): "
@@ -351,7 +382,30 @@ def run_prompt(
         ledger.fallback_reason = analysis.fallback_reason
         if ledger.status == "active":
             ledger.status = "degraded"
-    routing = route(analysis, enabled_list)
+    # ---- hybrid selection (gateway mode): Nemotron recommends, the
+    # deterministic validator checks the recommendation against hard facts
+    # (exists / enabled / context / capabilities / pricing / not blocked).
+    # Invalid or missing recommendation -> deterministic route(). ----
+    gateway_decision = None
+    if gateway_mode:
+        rec = None
+        if cp_active:
+            from backend.llm.model_selector import recommend
+            rec = recommend(norm.view().get("normalized", prompt)[:600],
+                            {"task_type": analysis.task_type,
+                             "difficulty_score": analysis.difficulty_score,
+                             "required_capabilities": analysis.required_capabilities},
+                            candidate_views(customer_id, enabled_list))
+        gateway_decision = select_model(analysis, customer_id, enabled_list, rec,
+                                        norm.view().get("normalized", prompt))
+        routing = gateway_decision.routing
+        if routing is None:
+            routing = route(analysis, _adapt(enabled_list))
+            gateway_decision.routing = routing
+        reasons.append(f"Model selection: {gateway_decision.provenance}"
+                       + (f" ({gateway_decision.reason})" if gateway_decision.reason else ""))
+    else:
+        routing = route(analysis, enabled_list)
     reasons.extend(routing.decision_reason)
     if analysis.fallback_used:
         reasons.append(f"Classifier fallback: {analysis.fallback_reason}. "
@@ -365,7 +419,8 @@ def run_prompt(
 
     # ---- context hit: reusable context seen before, new question ----
     ctx_tokens = len(context) // 4 if context else 0
-    ctx_hit = cache.get_context(context) if (use_cache and context) else None
+    ctx_hit = cache.get_context(context, namespace=customer_id or "") \
+        if (use_cache and context) else None
 
     first = force_model or routing.selected_model
     # Escalation ladder is capped at the baseline price tier: the baseline
@@ -389,7 +444,8 @@ def run_prompt(
                              estimated_output_tokens=effective_max,
                              output_budget_signals=list(budget_signals),
                              context_limit_triggered=routing.context_limit_triggered,
-                             normalization=norm.view())
+                             normalization=norm.view(),
+                             gateway_decision=gateway_decision)
     tried: set[str] = set()
     for i, mid in enumerate(order):
         entry = enabled[mid]
@@ -402,8 +458,15 @@ def run_prompt(
             messages = ([{"role": "system", "content": context}] if context else []) + \
                        [{"role": "user", "content": prompt}]
         try:
-            r: GenerateResult = _generate(mid, messages,
-                                          max_tokens=effective_max, temperature=temperature)
+            if gateway_mode and provider_factory is not None:
+                # Customer's own provider endpoint (their base_url + their
+                # decrypted credential). Never the platform's OpenCode key.
+                provider = provider_factory(mid)
+                r: GenerateResult = provider.generate(
+                    messages, max_tokens=effective_max, temperature=temperature)
+            else:
+                r: GenerateResult = _generate(mid, messages,
+                                              max_tokens=effective_max, temperature=temperature)
         except OpenCodeError as e:
             failure_type = _provider_failure_type(e)
             if failure_type == "permanent":
@@ -481,7 +544,9 @@ def run_prompt(
         cache.put(CacheEntry(prompt=prompt, context=context, answer=last.answer,
                              model_id=last.model_id, input_tokens=last.input_tokens,
                              output_tokens=last.output_tokens, cost_usd=last.cost_usd,
-                             context_tokens=ctx_tokens))
+                             context_tokens=ctx_tokens,
+                             namespace=customer_id or ""),
+                  namespace=customer_id or "")
         if ctx_hit is not None:
             price = enabled[last.model_id].input_per_1M
             cache.note_context_hit(ctx_tokens, price)
@@ -513,6 +578,12 @@ def _provider_failure_type(error: OpenCodeError) -> str:
             or "timeout" in message or "timed out" in message or "transport error" in message):
         return "transient"
     return "permanent"
+
+
+def _adapt(customer_models: list) -> list[ModelEntry]:
+    """Adapt CustomerModelEntry objects to the single-tenant router's shape."""
+    from backend.core.gateway_router import _to_model_entry
+    return [_to_model_entry(m) for m in customer_models]
 
 
 def _finish_costs_free_hit(result: OptimizerResult, enabled: list[ModelEntry],

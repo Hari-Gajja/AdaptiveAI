@@ -19,8 +19,13 @@ from threading import Lock
 from pydantic import BaseModel, Field, field_validator
 
 from backend.config import MODEL_PRICING, endpoint_family, settings
+from backend.core.pricing import lookup_pricing
 
 DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "models.json"
+
+# Models that are genuinely FREE (price 0.0 is valid + "configured"). Anything
+# else with zero pricing is treated as unpriced (pricing_status unavailable).
+FREE_MODELS = {"nemotron-3.5-lightning-free"}
 
 # Conservative known context windows (tokens). Admin-editable via PUT.
 # Sources: models.dev / Go docs tracker, Sep 2026. Default 200k when unknown.
@@ -132,8 +137,21 @@ def _now() -> str:
 
 
 def _defaults_for(model_id: str) -> tuple[float, float, float, int]:
+    """Pricing defaults: pricing_registry catalog first (single source of
+    truth for the gateway era), then the legacy MODEL_PRICING table."""
+    cat = lookup_pricing(model_id)
+    if cat is not None:
+        return (cat["input_per_1M"], cat["output_per_1M"], cat["cached_per_1M"],
+                KNOWN_CONTEXT.get(model_id, DEFAULT_CONTEXT))
     inp, outp, cached = MODEL_PRICING.get(model_id, (0.0, 0.0, 0.0))
     return inp, outp, cached, KNOWN_CONTEXT.get(model_id, DEFAULT_CONTEXT)
+
+
+def _pricing_ok(model_id: str, inp: float, outp: float) -> bool:
+    """Zero pricing is valid ONLY for known-free models."""
+    if model_id in FREE_MODELS:
+        return True
+    return inp > 0 and outp > 0
 
 
 def public_view(entry: ModelEntry) -> dict:
@@ -216,9 +234,11 @@ class ModelRegistry:
                 output_per_1M=body.output_per_1M if body.output_per_1M is not None else outp,
                 cached_per_1M=body.cached_per_1M if body.cached_per_1M is not None else cached,
                 context_window=body.context_window or ctx,
-                pricing_status=("configured" if (body.input_per_1M if body.input_per_1M is not None else inp) > 0
-                                and (body.output_per_1M if body.output_per_1M is not None else outp) > 0
-                                else "unavailable"),
+                pricing_status=("configured" if _pricing_ok(
+                    body.model_id,
+                    body.input_per_1M if body.input_per_1M is not None else inp,
+                    body.output_per_1M if body.output_per_1M is not None else outp)
+                    else "unavailable"),
                 created_at=_now(), updated_at=_now(),
             )
             if entry.enabled and entry.pricing_status == "unavailable":
@@ -243,8 +263,9 @@ class ModelRegistry:
                 if v is not None:
                     data[k] = v
             if "input_per_1M" in changes or "output_per_1M" in changes:
-                data["pricing_status"] = ("configured" if data["input_per_1M"] > 0 and data["output_per_1M"] > 0
-                                            else "unavailable")
+                data["pricing_status"] = ("configured" if _pricing_ok(
+                    model_id, data["input_per_1M"], data["output_per_1M"])
+                    else "unavailable")
             data["updated_at"] = _now()
             updated = ModelEntry(**data)
             self._models[model_id] = updated

@@ -18,5 +18,23 @@
     "general": 0.811,
     "measured_at": "2026-09-04T20:56:22.580569+00:00",
     "n": 24
+  },
+  "qwen3.8-flash": {
+    "reasoning": 0.586,
+    "coding": 0.677,
+    "math": 0.603,
+    "summarization": 0.602,
+    "long_context": 0.888,
+    "general": 0.799,
+    "measured_at": "2026-09-06T07:19:27.164781+00:00",
+    "n": 24,
+    "category_test_counts": {
+      "reasoning": 4,
+      "coding": 4,
+      "math": 4,
+      "summarization": 4,
+      "long_context": 4,
+      "general": 4
+    }
   }
 }
